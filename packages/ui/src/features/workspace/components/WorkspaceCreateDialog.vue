@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
-import { api, ApiError } from "../../../composables/api";
+import { api, ApiError, type MxcInstallSnapshot } from "../../../composables/api";
 import type {
     WorkspaceBackendMaturity,
     WorkspaceCapabilityPreflight,
@@ -109,6 +109,12 @@ const preflightLoading = ref(false),
 const mxcPreflight = ref<WorkspaceCapabilityPreflight | null>(null);
 const hostPreflight = ref<WorkspaceCapabilityPreflight | null>(null);
 
+// task-992: product-managed MXC install (state/version/size + one-click install).
+const mxcInstall = ref<MxcInstallSnapshot | null>(null);
+const mxcInstallLoading = ref(false);
+const mxcInstalling = ref(false);
+const mxcInstallError = ref("");
+
 const hostRiskAck = ref(false);
 const nameTouched = ref(false),
     descriptionTouched = ref(false),
@@ -162,6 +168,22 @@ const showMxcGuidance = computed(
         !preflightLoading.value &&
         mxcPreflight.value !== null &&
         !mxcAvailable.value,
+);
+
+/** Only offer the installer when it can actually work: no fake buttons. */
+const showMxcInstallCta = computed(
+    () =>
+        isDirectAttach.value &&
+        !preflightLoading.value &&
+        !mxcAvailable.value &&
+        mxcInstall.value?.state === "missing" &&
+        mxcInstall.value?.installSupported === true,
+);
+const mxcVersionLabel = computed(
+    () => mxcInstall.value?.managedVersion ?? mxcInstall.value?.pinnedVersion ?? "—",
+);
+const mxcSizeMb = computed(() =>
+    Math.round((mxcInstall.value?.downloadSizeBytes ?? 0) / (1024 * 1024)),
 );
 
 const storageModeLabel = computed(() =>
@@ -401,6 +423,49 @@ function aggregatePreflights(
     return results.find((preflight) => !preflight.available) ?? results[0]!;
 }
 
+function mxcInstallReason(cause: unknown): string {
+    if (cause instanceof ApiError) {
+        return cause.problem.detail || cause.problem.code;
+    }
+    return String(cause);
+}
+
+/** task-992: read the install snapshot (never blocks creation; failure only disables the CTA). */
+async function refreshMxcInstall() {
+    mxcInstallLoading.value = true;
+    mxcInstallError.value = "";
+    try {
+        mxcInstall.value = await api.getMxcInstallSnapshot();
+    } catch (cause) {
+        mxcInstall.value = null;
+        mxcInstallError.value = mxcInstallReason(cause);
+        logger.warn("MXC install snapshot failed", cause);
+    } finally {
+        mxcInstallLoading.value = false;
+    }
+}
+
+/**
+ * task-992: one-click managed install. On success the capability preflight is re-run so the
+ * MXC card flips to available without a page refresh; on failure the MXC option stays
+ * unavailable and host execution remains selectable (a failed install never blocks creation).
+ */
+async function installManagedMxc() {
+    if (mxcInstalling.value) return;
+    mxcInstalling.value = true;
+    mxcInstallError.value = "";
+    try {
+        mxcInstall.value = await api.installManagedMxc();
+        await runPreflight();
+    } catch (cause) {
+        mxcInstallError.value = mxcInstallReason(cause);
+        logger.error("Managed MXC install failed", cause);
+        void refreshMxcInstall();
+    } finally {
+        mxcInstalling.value = false;
+    }
+}
+
 async function runPreflight() {
     const paths = validRootPaths.value;
     if (!isDirectAttach.value || paths.length === 0) {
@@ -525,6 +590,7 @@ watch(
         if (!open) return;
         reset();
         void discoverSystemRoots();
+        void refreshMxcInstall();
     },
     { immediate: true },
 );
@@ -804,6 +870,16 @@ watch(
                             data-testid="workspace-execution-mxc-status"
                             >{{ mxcCardStatus() }}</span
                         >
+                        <span
+                            v-if="mxcInstall?.state === 'managed' && mxcInstall.managedVersion"
+                            class="mt-1 block text-xs text-muted-foreground"
+                            data-testid="workspace-mxc-managed-version"
+                            >{{
+                                t("workspace.mxcInstalledVersion", {
+                                    version: mxcInstall.managedVersion,
+                                })
+                            }}</span
+                        >
                     </button>
 
                     <div
@@ -814,6 +890,48 @@ watch(
                         <p class="text-xs text-muted-foreground">
                             {{ t("workspace.mxcUnavailableGuidance") }}
                         </p>
+                        <!-- task-992: managed installer. Version + size are shown so the
+                             download is never a surprise; a blank source is stated, not faked. -->
+                        <div
+                            v-if="mxcInstall"
+                            class="mt-2 grid gap-1"
+                            data-testid="workspace-mxc-install"
+                        >
+                            <Button
+                                v-if="showMxcInstallCta"
+                                type="button"
+                                variant="outline"
+                                data-testid="workspace-mxc-install-cta"
+                                :disabled="mxcInstalling || mxcInstallLoading"
+                                @click="installManagedMxc"
+                            >
+                                {{
+                                    mxcInstalling
+                                        ? t("workspace.mxcInstalling")
+                                        : t("workspace.mxcInstallCta", {
+                                              version: mxcVersionLabel,
+                                              size: mxcSizeMb,
+                                          })
+                                }}
+                            </Button>
+                            <p
+                                v-else-if="
+                                    mxcInstall.state === 'missing' &&
+                                    mxcInstall.installSupported === false
+                                "
+                                class="text-xs text-muted-foreground"
+                                data-testid="workspace-mxc-source-missing"
+                            >
+                                {{ t("workspace.mxcSourceNotConfigured") }}
+                            </p>
+                            <p
+                                v-if="mxcInstallError"
+                                class="text-xs text-destructive"
+                                data-testid="workspace-mxc-install-error"
+                            >
+                                {{ t("workspace.mxcInstallFailed") }}: {{ mxcInstallError }}
+                            </p>
+                        </div>
                         <Button
                             type="button"
                             variant="outline"

@@ -1311,6 +1311,13 @@ const messages = {
             mxcUnavailableGuidance:
                 "MXC 当前不可用。你可以显式切换到不受沙盒限制的宿主执行后继续；系统不会自动切换。",
             switchToHostExecution: "切换到不受沙盒限制的宿主执行",
+            // task-992: 托管安装（版本/大小必须可见；官方 early preview 不是安全边界）
+            mxcInstallCta: "安装 MXC {version}（约 {size} MB）",
+            mxcInstalling: "正在安装 MXC…",
+            mxcInstallFailed: "MXC 安装失败",
+            mxcInstalledVersion: "MXC {version}（托管安装）",
+            mxcRetry: "重试",
+            mxcSourceNotConfigured: "本实例未配置 MXC 下载源，无法一键安装",
             nameLabel: "名称",
             namePlaceholder: "我的工作区",
             descriptionLabel: "描述（可选）",
@@ -5901,6 +5908,12 @@ const messages = {
             mxcUnavailableGuidance:
                 "MXC is currently unavailable. You can explicitly switch to unrestricted host execution to continue; the system never switches automatically.",
             switchToHostExecution: "Switch to unrestricted host execution",
+            mxcInstallCta: "Install MXC {version} (about {size} MB)",
+            mxcInstalling: "Installing MXC…",
+            mxcInstallFailed: "MXC installation failed",
+            mxcInstalledVersion: "MXC {version} (managed install)",
+            mxcRetry: "Retry",
+            mxcSourceNotConfigured: "This instance has no MXC download source configured",
             nameLabel: "Name",
             namePlaceholder: "My workspace",
             descriptionLabel: "Description (optional)",

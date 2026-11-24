@@ -2663,6 +2663,33 @@ function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
     } satisfies WorkspaceMappingSurface;
 }
 
+/**
+ * task-992: product-managed MXC install state (execution-mode selector).
+ * `state` stays the historical three-state value; `reason`/`checksumState` carry the
+ * detail so "installed but tampered" never renders as `managed`.
+ */
+export interface MxcInstallSnapshot {
+    state: "managed" | "system" | "missing";
+    source: string;
+    installDir: string;
+    pinnedVersion: string;
+    downloadSizeBytes: number;
+    sha256: string;
+    archiveName: string;
+    sourceUrl: string;
+    sourceConfigured: boolean;
+    installSupported: boolean;
+    checksumState: string;
+    managedVersion: string | null;
+    overridePresent: boolean;
+    overrideExecutable: string | null;
+    availableVersions: string[];
+    reason?: string;
+    detail?: string;
+    maturity?: string;
+    isolationDisclaimer?: string;
+}
+
 export class ApiError extends Error {
     public readonly problem: ProblemDetails;
     public readonly retryAfterSeconds?: number;
@@ -5740,6 +5767,26 @@ export const api = {
                 hostPath: input.hostPath,
                 executionMode: input.executionMode,
             }),
+        });
+    },
+    /** task-992: managed MXC install snapshot (state/version/size) for the selector. */
+    async getMxcInstallSnapshot(): Promise<MxcInstallSnapshot> {
+        return request<MxcInstallSnapshot>("/workspaces/mxc-install");
+    },
+    /** task-992: one-click managed install (checksum-pinned, product-owned directory). */
+    async installManagedMxc(): Promise<MxcInstallSnapshot> {
+        return request<MxcInstallSnapshot>("/workspaces/mxc-install", { method: "POST" });
+    },
+    /** task-992: instance-owner override to an already installed executable. */
+    async setMxcOverride(executablePath: string): Promise<MxcInstallSnapshot> {
+        return request<MxcInstallSnapshot>("/workspaces/mxc-install/override", {
+            method: "PUT",
+            body: JSON.stringify({ executablePath }),
+        });
+    },
+    async clearMxcOverride(): Promise<MxcInstallSnapshot> {
+        return request<MxcInstallSnapshot>("/workspaces/mxc-install/override", {
+            method: "DELETE",
         });
     },
     async startWorkspaceImport(

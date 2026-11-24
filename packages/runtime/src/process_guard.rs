@@ -536,8 +536,11 @@ async fn execute_mxc(request: ProcessRequest) -> Result<ProcessResult> {
 
     #[cfg(windows)]
     {
-        let executable =
-            std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_else(|_| "wxc-exec.exe".to_string());
+        // task-992: every launch path shares one resolver so a product-managed
+        // install is actually used (env > instance override > managed > PATH).
+        let executable = crate::mxc_install::resolve_mxc_executable_or_path()
+            .map(|resolved| resolved.path.to_string_lossy().into_owned())
+            .map_err(|error| RuntimeError::Command(format!("{}: {error}", error.code())))?;
         // PLAN-0394: the same builder serves one-shot and job paths.
         let cwd = request.cwd.clone().expect("validated cwd");
         let config = build_mxc_policy(&MxcPolicyRequest {
@@ -969,8 +972,21 @@ async fn probe_mxc() -> Result<BackendCapabilitySnapshot> {
 
     #[cfg(windows)]
     {
-        let executable =
-            std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_else(|_| "wxc-exec.exe".to_string());
+        let executable = match crate::mxc_install::resolve_mxc_executable() {
+            Ok(resolved) => resolved.path.to_string_lossy().into_owned(),
+            Err(error) => {
+                // task-992: "not installed" is a selector-facing state, not a raw
+                // spawn failure; checksum mismatches must never fall back to PATH.
+                return Ok(BackendCapabilitySnapshot::unavailable(
+                    "windows-mxc",
+                    "builtin",
+                    "experimental",
+                    "windows-mxc",
+                    error.code(),
+                    Some(diagnostics(None)),
+                ));
+            }
+        };
         let probe_timeout =
             resolve_mxc_probe_timeout(std::env::var(MXC_PROBE_TIMEOUT_ENV).ok().as_deref());
         let output = match run_mxc_probe_command(&executable, &["--probe"], probe_timeout).await {

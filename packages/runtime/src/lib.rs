@@ -27,6 +27,7 @@ pub mod lifecycle;
 pub mod log_redact;
 pub mod mcp_protocol;
 pub mod mcp_session;
+pub mod mxc_install;
 pub mod nested_repo_kind;
 pub mod plugin;
 pub mod process_guard;

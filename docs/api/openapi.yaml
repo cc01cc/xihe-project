@@ -819,6 +819,76 @@ paths:
     get: { tags: [workspace], operationId: listWorkspaceImportSources, summary: List available workspace import sources, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: path, required: true, schema: { type: string } }], responses: { '200': { description: Runtime-visible source directory entries }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/import-source-roots:
     get: { tags: [workspace], operationId: listWorkspaceImportSourceRoots, summary: List host roots for the workspace import wizard, security: [{ bearerAuth: [] }], responses: { '200': { description: Readable host roots only (Windows drive letters / POSIX root); directory contents are not exposed here, content: { application/json: { schema: { type: array, items: { type: object, required: [path, label, kind], properties: { path: { type: string }, label: { type: string }, kind: { type: string, enum: [drive, root] } } } } } } }, '401': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/workspaces/mxc-install:
+    get:
+      tags: [workspace]
+      operationId: getMxcInstallSnapshot
+      summary: MXC install state for the execution-mode selector
+      description: |
+        task-992. `state` stays `managed|system|missing`; `reason` and `checksumState` carry the
+        detail, so an install whose executable no longer matches its pinned sha256 never renders as
+        `managed`. `source` reports which resolution layer actually answers
+        (`env(override)` > `instance(override)` > `managed` > `path` > `none`), matching the Runtime
+        resolver order. `downloadSizeBytes` lets the UI show the real download size before a click.
+        MXC is an early preview and is **not** a security boundary (`isolationDisclaimer`); Xihe uses it
+        as defense-in-depth only.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Install snapshot (state/source/version/size/checksum state)', content: { application/json: { schema: { $ref: '#/components/schemas/MxcInstallSnapshot' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '503': { description: 'MXC_INSTALL_UNAVAILABLE (installer bean missing on this instance)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      tags: [workspace]
+      operationId: installManagedMxc
+      summary: Download and install the pinned MXC release under the Xihe-owned directory
+      description: |
+        task-992. Requires `WRITE_INSTANCE_CONTENT`. Flow: download to `.staging` → sha256 verify →
+        extract only `x64/**` → atomic rename → write `install.json` → keep at most two versions.
+        Refusals: `MXC_SOURCE_NOT_CONFIGURED` (no download source), `MXC_CHECKSUM_MISMATCH` (nothing
+        installed, previous build untouched, **no PATH fallback**), `MXC_INSTALL_BUSY` (single-flight),
+        `MXC_DOWNLOAD_FAILED`, `MXC_ARCHIVE_INVALID`. A failure never blocks workspace creation;
+        host execution stays selectable.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Install completed; returns the refreshed snapshot', content: { application/json: { schema: { $ref: '#/components/schemas/MxcInstallSnapshot' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { description: 'MXC_CHECKSUM_MISMATCH / MXC_INSTALL_BUSY / MXC_SOURCE_NOT_CONFIGURED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '502': { description: 'MXC_DOWNLOAD_FAILED / MXC_ARCHIVE_INVALID', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/workspaces/mxc-install/override:
+    put:
+      tags: [workspace]
+      operationId: setMxcInstanceOverride
+      summary: Point the instance at an already installed MXC executable
+      description: |
+        task-992. Instance-owner override, delivered as `<installDir>/override.json` (the Runtime cannot
+        read CP's database). The path must be absolute and must already be a file; the override bypasses
+        the pinned checksum by design and is reported as `source=instance(override)`.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [executablePath]
+              properties:
+                executablePath: { type: string }
+      responses:
+        '200': { description: 'Override written; refreshed snapshot', content: { application/json: { schema: { $ref: '#/components/schemas/MxcInstallSnapshot' } } } }
+        '400': { description: 'INVALID_REQUEST (not absolute) / MXC_INSTANCE_OVERRIDE_MISSING (not a file)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [workspace]
+      operationId: clearMxcInstanceOverride
+      summary: Remove the instance MXC override
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Override cleared; refreshed snapshot', content: { application/json: { schema: { $ref: '#/components/schemas/MxcInstallSnapshot' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/workspace-imports/{importId}:
     get: { tags: [workspace], operationId: getWorkspaceImport, summary: Get one workspace import by id, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import status }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspace-imports/{importId}/cancel:
@@ -7436,6 +7506,30 @@ components:
         that endpoint exists.
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
+    MxcInstallSnapshot:
+      type: object
+      additionalProperties: false
+      required: [state, source, installDir, pinnedVersion, downloadSizeBytes, sha256, archiveName, sourceUrl, sourceConfigured, installSupported, checksumState, managedVersion, overridePresent, availableVersions]
+      properties:
+        state: { type: string, enum: [managed, system, missing] }
+        source: { type: string, description: 'Which resolution layer answers: env(override) > instance(override) > managed > path > none.' }
+        installDir: { type: string }
+        pinnedVersion: { type: string, description: 'Release pinned by the product (MXC_MANAGED_VERSION).' }
+        downloadSizeBytes: { type: integer, minimum: 0, description: 'Archive size shown to the user before a click (~509 MB for v1.1.0).' }
+        sha256: { type: string, description: 'Pinned archive hash; a mismatch refuses the install and never falls back to PATH.' }
+        archiveName: { type: string }
+        sourceUrl: { type: string }
+        sourceConfigured: { type: boolean }
+        installSupported: { type: boolean }
+        checksumState: { type: string, enum: [verified, mismatch, invalid-manifest, missing-executable, unknown] }
+        managedVersion: { type: [string, 'null'] }
+        overridePresent: { type: boolean }
+        overrideExecutable: { type: [string, 'null'] }
+        availableVersions: { type: array, items: { type: string } }
+        reason: { type: string, description: 'MXC_NOT_INSTALLED / MXC_CHECKSUM_MISMATCH when applicable.' }
+        detail: { type: string }
+        maturity: { type: string, description: 'experimental: MXC is an early preview and not a security boundary.' }
+        isolationDisclaimer: { type: string }
     OrgUnitNode:
       type: object
       additionalProperties: false

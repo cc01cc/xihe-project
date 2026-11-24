@@ -48,8 +48,11 @@ pub fn build_mxc_job_with_roots(
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace.clone());
-    let executable =
-        std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_else(|_| "wxc-exec.exe".to_string());
+    // task-992: the job/file-worker path shares the same resolver as the probe and
+    // one-shot execution, so a managed install is used here too.
+    let executable = crate::mxc_install::resolve_mxc_executable_or_path()
+        .map(|resolved| resolved.path.to_string_lossy().into_owned())
+        .map_err(|error| JobEngineError::LaunchPending(format!("{}: {error}", error.code())))?;
     let file_worker = request.args.iter().any(|arg| arg == "--file-worker");
     let mut args = request.args;
     let granted_roots = mxc_granted_roots(&workspace, roots);

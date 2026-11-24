@@ -15,8 +15,10 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceImportSourceService;
+import com.cc01cc.p.xihe.cp.service.MxcManagedInstallService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceNestedReposService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -45,6 +47,13 @@ public class WorkspaceController {
     private final RequesterAuthority requesterAuthority;
     private final WorkspaceImportSourceService importSourceService;
 
+    /**
+     * task-992: optional so existing constructor-based tests keep working; production
+     * wiring always provides it. A missing bean degrades to 503, never to a fake "managed" state.
+     */
+    @Autowired(required = false)
+    private MxcManagedInstallService mxcManagedInstallService;
+
     public WorkspaceController(WorkspaceService workspaceService, WorkspaceBackendPolicy backendPolicy,
                                WorkspaceNestedReposService nestedReposService,
                                RequesterAuthority requesterAuthority,
@@ -54,6 +63,62 @@ public class WorkspaceController {
         this.nestedReposService = nestedReposService;
         this.requesterAuthority = requesterAuthority;
         this.importSourceService = importSourceService;
+    }
+
+    private MxcManagedInstallService mxcInstaller() {
+        if (mxcManagedInstallService == null) {
+            throw new CpApiException(HttpStatus.SERVICE_UNAVAILABLE, "MXC_INSTALL_UNAVAILABLE",
+                    "The managed MXC installer is not available on this instance.");
+        }
+        return mxcManagedInstallService;
+    }
+
+    /** task-992: install state for the execution-mode selector (managed|system|missing + version/size). */
+    @GetMapping("/mxc-install")
+    @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:read")
+    public ResponseEntity<?> mxcInstallSnapshot() {
+        try {
+            return ResponseEntity.ok(mxcInstaller().snapshot());
+        } catch (CpApiException error) {
+            return ProblemDetailsHandler.problemResponse(error.getStatus(), error.getCode(), error.getMessage());
+        }
+    }
+
+    /**
+     * task-992: one-click managed install. Instance-owner write face; the archive is
+     * checksum-pinned, extracted only from {@code x64/**}, and lands atomically under the
+     * product-owned directory. A failure never blocks workspace creation (host mode remains).
+     */
+    @PostMapping("/mxc-install")
+    @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
+    public ResponseEntity<?> mxcInstall() {
+        try {
+            return ResponseEntity.ok(mxcInstaller().install());
+        } catch (CpApiException error) {
+            return ProblemDetailsHandler.problemResponse(error.getStatus(), error.getCode(), error.getMessage());
+        }
+    }
+
+    /** task-992: instance-owner override to an already installed executable (file-based, no DB channel). */
+    @org.springframework.web.bind.annotation.PutMapping("/mxc-install/override")
+    @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
+    public ResponseEntity<?> mxcInstallOverride(@RequestBody(required = false) Map<String, String> body) {
+        try {
+            return ResponseEntity.ok(mxcInstaller().setOverride(body == null ? null : body.get("executablePath")));
+        } catch (CpApiException error) {
+            return ProblemDetailsHandler.problemResponse(error.getStatus(), error.getCode(), error.getMessage());
+        }
+    }
+
+    @DeleteMapping("/mxc-install/override")
+    @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
+    public ResponseEntity<?> clearMxcInstallOverride() {
+        try {
+            return ResponseEntity.ok(mxcInstaller().clearOverride());
+        } catch (CpApiException error) {
+            return ProblemDetailsHandler.problemResponse(error.getStatus(), error.getCode(), error.getMessage());
+        }
     }
 
     /**

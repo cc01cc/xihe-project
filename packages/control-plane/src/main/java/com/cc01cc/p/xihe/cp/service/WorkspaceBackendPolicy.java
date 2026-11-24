@@ -178,7 +178,10 @@ public class WorkspaceBackendPolicy {
     }
 
     static String detectMxcInstallState(Map<String, String> env, String installDir) {
-        if (hasExecutable(Path.of(installDir))) {
+        // task-992: "managed" now means "manifest present, executable present, sha256 matches".
+        // A bare wxc-exec.exe dropped into the directory is no longer enough — a tampered
+        // build must not be advertised as managed (the Runtime refuses it as well).
+        if (managedInstallHealthy(Path.of(installDir))) {
             return MXC_INSTALL_MANAGED;
         }
         String pathValue = env == null ? null : env.get("PATH");
@@ -195,6 +198,32 @@ public class WorkspaceBackendPolicy {
     private static boolean hasExecutable(Path dir) {
         return Files.isRegularFile(dir.resolve("wxc-exec.exe"))
                 || Files.isRegularFile(dir.resolve("wxc-exec"));
+    }
+
+    static boolean managedInstallHealthy(Path dir) {
+        Path manifest = dir.resolve(MxcManagedInstallService.INSTALL_MANIFEST);
+        if (!Files.isRegularFile(manifest)) {
+            return false;
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+                    .readValue(Files.readString(manifest), Map.class);
+            String declared = String.valueOf(body.getOrDefault("sha256", "")).trim().toLowerCase();
+            String relative = String.valueOf(body.getOrDefault("executable", "")).trim();
+            if (declared.isEmpty() || relative.isEmpty()) {
+                return false;
+            }
+            Path executable = Path.of(relative);
+            Path resolved = executable.isAbsolute() ? executable : dir.resolve(executable);
+            if (!Files.isRegularFile(resolved)) {
+                return false;
+            }
+            return MxcManagedInstallService.sha256(resolved)
+                    .equalsIgnoreCase(declared);
+        } catch (java.io.IOException | RuntimeException error) {
+            return false;
+        }
     }
 
     private static String normalizeSwitch(String value) {
