@@ -38,7 +38,8 @@
 
 - **`agent-unit:` 是求值期派生的层级键，不是 `org:`（task-935 / D-1935）**：委派层级判据需要「这次 spawn 的目标是否落在调用方自己的单元子树内」，它注册为**独立命名空间** `agent-unit:`（`Matcher.TREE` + `Grantability.EVALUATION_ONLY`），值形如 `agent-unit:root/team`，由 `org_unit_members` 在求值时派生，**MUST NOT** 写入 `grants` 表、**MUST NOT** 接受 API 提交（与 `phys:` 同型）。`org:` 仍按上一条 **MUST NOT** 注册：两者并列不是笔误 —— `org:` 回答「能看见哪些单元」（visibility scope），`agent-unit:` 回答「能在哪个单元内派生」（action × resource）。层级判据 **MUST** 只经 `PolicyRequest.resources` 追加（`PolicyEngine.allowsByGrant` 的 `additionalResources` 形参，只追加不替换）进入求值，**MUST NOT** 另写 `if (isDescendant)` 之类旁路判断。`tree` matcher 按 `/` 分段覆盖后代，故 `agent-unit:root/team` 覆盖 `agent-unit:root/team/child`、不覆盖 `agent-unit:root/other`。
 
-- **分身由动作原子 `action:clone` 控制（task-935）**：Agent 预设默认含、人类预设默认不含（人类账户不允许分身，智能体允许）。同一主会话内复用已有子实例 **MUST NOT** 要求 `clone`；只有派生第 2 个实例才要求。`spawn_agent` 未显式指定目标时语义即「分身」，因此自 spawn 路径 **MUST** 求值 `action:clone × agent-unit:<调用方子树>`。
+- **分身由动作原子 `action:clone` 控制（task-935 / task-966）**：Agent 预设默认含、人类预设默认不含（人类账户不允许分身，智能体允许）。`spawn_agent` 未显式指定目标时语义即「分身」，因此自 spawn 路径 **MUST** 求值 `action:clone × agent-unit:<调用方子树>`。
+  **当前实现（2026-11-24 核准，task-966 `cc806c85d`）**：`spawn_agent` 的 MCP 参数只有一个键（`ChatSubmissionService.validateSpawnMcpArguments` 断言 `arguments.size() == 1`），**没有目标参数**，故每一次自 spawn 都是「分身」，一律要求 `clone`；这与「同一主会话内复用不要求 clone」并不冲突——后者要求的能力（显式目标选择）尚不存在，由 **task-961** 落地。961 合入时 **MUST** 按「有无显式目标」区分：有目标 ⇒ 只需 `action:spawn_agent`（委派），无目标 ⇒ 追加 `action:clone`（分身），且该区分 **MUST** 由请求资源表达，**MUST NOT** 写成 service 内的实例计数 if-else。
 
 **新增资源类别 playbook**：注册表加一行（namespace + matcher + canonicalizer）→ 提取器加一个 key → 校验器接受该前缀 → 单测 / golden 加用例 → 文档登记一行。**MUST NOT** 因此改表、改求值器或做迁移；真正的成本在确定 canonical 形态（什么算同一个资源），不在代码。
 
