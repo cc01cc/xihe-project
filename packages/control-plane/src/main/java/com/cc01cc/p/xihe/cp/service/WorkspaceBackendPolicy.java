@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -48,11 +49,14 @@ public class WorkspaceBackendPolicy {
                     + "(docs/i18n/zh-Hans/DEV-031-sandbox-backend-contract.md)";
 
     /**
-     * task-958 (R50/R54/R55): the only execution mode whose Runtime file layer addresses
-     * every declared root (each root resolves against its own host path). CP must refuse to
-     * declare a second root on any other mode — "can be selected" implies "can be managed".
+     * task-958/task-979 (R50/R54/R55): execution modes whose Runtime file layer addresses
+     * every declared root — {@code windows-host} resolves each root against its own host
+     * path, and {@code windows-mxc} grants every root in the MXC policy and routes the
+     * file worker by {@code rootId}. CP must refuse to declare a second root on any other
+     * mode — "can be selected" implies "can be managed". Docker stays fail-closed until it
+     * has a per-root mount mapping.
      */
-    public static final String MULTI_ROOT_EXECUTION_MODE = "windows-host";
+    public static final Set<String> MULTI_ROOT_EXECUTION_MODES = Set.of("windows-host", "windows-mxc");
 
     /** task-958 (R55): managed MXC install switch; MVP ships the policy + switch, not the download. */
     public static final String MXC_MANAGED_INSTALL_KEY = "XIHE_WORKSPACE_MXC_MANAGED_INSTALL";
@@ -103,7 +107,7 @@ public class WorkspaceBackendPolicy {
     /** task-958: a mode can serve every declared root only when its file layer maps each root. */
     public static boolean supportsMultipleRoots(String executionMode) {
         return executionMode != null
-                && MULTI_ROOT_EXECUTION_MODE.equalsIgnoreCase(executionMode.trim());
+                && MULTI_ROOT_EXECUTION_MODES.contains(executionMode.trim().toLowerCase(java.util.Locale.ROOT));
     }
 
     /**
@@ -119,7 +123,7 @@ public class WorkspaceBackendPolicy {
                 HttpStatus.BAD_REQUEST,
                 "INVALID_REQUEST",
                 "executionMode " + mode + " supports only the primary root; declaring multiple roots "
-                        + "requires " + MULTI_ROOT_EXECUTION_MODE);
+                        + "requires one of " + MULTI_ROOT_EXECUTION_MODES);
     }
 
     /**

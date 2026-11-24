@@ -530,12 +530,13 @@ pub fn root_access_for_operation(operation: &str) -> RootAccess {
     }
 }
 
-/// task-958: execution modes whose file layer can address **every** declared
-/// root, not just the primary one. `windows-host` resolves each root against
-/// its own host path; `windows-mxc`/`docker` have no per-root mount mapping, so
-/// CP refuses to declare a second root in those modes (WORKSPACE_AUTHORIZATION
+/// task-958/task-979: execution modes whose file layer can address **every**
+/// declared root, not just the primary one. `windows-host` resolves each root
+/// against its own host path; `windows-mxc` grants every declared root in the
+/// MXC policy and routes file-worker requests by `rootId`. `docker` still has
+/// no per-root mount mapping, so it stays fail-closed (WORKSPACE_AUTHORIZATION
 /// R50/R54/R55: if a root can be selected it must be manageable).
-pub const MULTI_ROOT_EXECUTION_MODES: &[&str] = &["windows-host"];
+pub const MULTI_ROOT_EXECUTION_MODES: &[&str] = &["windows-host", "windows-mxc"];
 
 /// task-958: can `operation` be served from the selected declared root?
 ///
@@ -599,16 +600,30 @@ impl WorkspaceExecutionRouter {
     async fn execute_mxc_file_operation(
         &self,
         workspace_id: &str,
-        workspace_path: &str,
+        primary_path: &str,
+        root_id: Option<&str>,
         operation: &str,
-        payload: Value,
+        mut payload: Value,
         binary: Option<&[u8]>,
     ) -> Result<Value> {
-        preflight_file_operation(workspace_path, operation, &payload)?;
+        // Primary-root requests keep the pre-979 path (no spec fetch); a
+        // declared-root request loads the table so the worker can route by
+        // rootId and the MXC policy can grant every root.
+        let roots = if root_id.is_some() {
+            self.ensurer.declared_roots(workspace_id).await?
+        } else {
+            Vec::new()
+        };
+        let boundary = fs::select_root_boundary(primary_path, &roots, root_id)?;
+        let target_path = boundary.host_path.to_string_lossy().into_owned();
+        if let Some(root_id) = root_id {
+            payload["rootId"] = Value::String(root_id.to_string());
+        }
+        preflight_file_operation(&target_path, operation, &payload)?;
         let capability = crate::process_guard::probe_direct_attach(
             crate::process_guard::DirectAttachProbeRequest {
                 storage_mode: "direct_attach".to_string(),
-                host_path: workspace_path.to_string(),
+                host_path: primary_path.to_string(),
                 execution_mode: "windows-mxc".to_string(),
             },
         )
@@ -624,6 +639,7 @@ impl WorkspaceExecutionRouter {
         let frame = if let Some(data) = binary {
             file_worker::encode_binary_request(
                 payload.get("path").and_then(Value::as_str).unwrap_or(""),
+                root_id,
                 data,
             )?
         } else {
@@ -641,19 +657,20 @@ impl WorkspaceExecutionRouter {
         let worker = std::env::current_exe()
             .map_err(|error| RuntimeError::Command(format!("resolve file worker: {error}")))?;
         let job_id = format!("file-worker-{workspace_id}-{}", uuid::Uuid::new_v4());
-        let plan = crate::job_mxc_adapter::build_mxc_job(
+        let plan = crate::job_mxc_adapter::build_mxc_job_with_roots(
             crate::job_mxc_adapter::MxcJobRequest {
-                workspace_path: workspace_path.to_string(),
+                workspace_path: primary_path.to_string(),
                 command: worker.to_string_lossy().into_owned(),
                 args: vec![
                     "--file-worker".to_string(),
                     "--workspace".to_string(),
-                    workspace_path.to_string(),
+                    primary_path.to_string(),
                 ],
-                cwd: Some(workspace_path.to_string()),
+                cwd: Some(target_path),
                 env: std::collections::BTreeMap::new(),
                 timeout_secs: 30,
             },
+            &roots,
             &self.job_engine.output_dir(&job_id),
         )
         .map_err(job_engine_error)?;
@@ -844,6 +861,7 @@ impl WorkspaceExecutionRouter {
                 .execute_direct_attach_operation(
                     workspace_id,
                     &instance.workspace_path,
+                    None,
                     &execution_mode,
                     operation,
                     payload,
@@ -865,9 +883,10 @@ impl WorkspaceExecutionRouter {
     ///
     /// task-958 (R50/R54/R55): there is no primary/secondary privilege split.
     /// `declared_root_operation_support` decides by `(execution mode, access)`;
-    /// `windows-host` serves reads and writes from any declared root, while
-    /// `windows-mxc`/`docker` fail closed with an explicit per-root code
-    /// because their file layer cannot address a second mount.
+    /// `windows-host` resolves each root on the host, `windows-mxc` grants every
+    /// declared root in the policy and routes the file worker by `rootId`, and
+    /// `docker` still fails closed with an explicit per-root code because it has
+    /// no per-root mount mapping.
     async fn exec_oneshot_in_root(
         &self,
         workspace_id: &str,
@@ -893,9 +912,22 @@ impl WorkspaceExecutionRouter {
             },
         )?;
         let root_path = boundary.host_path.to_string_lossy().into_owned();
+        if instance.execution_mode == "windows-mxc" {
+            return self
+                .execute_mxc_file_operation(
+                    workspace_id,
+                    &instance.workspace_path,
+                    Some(root_id),
+                    operation,
+                    payload,
+                    None,
+                )
+                .await;
+        }
         self.execute_direct_attach_operation(
             workspace_id,
             &root_path,
+            None,
             &instance.execution_mode,
             operation,
             payload,
@@ -907,6 +939,7 @@ impl WorkspaceExecutionRouter {
         &self,
         workspace_id: &str,
         workspace_path: &str,
+        root_id: Option<&str>,
         execution_mode: &str,
         operation: &str,
         payload: Value,
@@ -920,7 +953,14 @@ impl WorkspaceExecutionRouter {
         }
         if execution_mode == "windows-mxc" {
             return self
-                .execute_mxc_file_operation(workspace_id, workspace_path, operation, payload, None)
+                .execute_mxc_file_operation(
+                    workspace_id,
+                    workspace_path,
+                    root_id,
+                    operation,
+                    payload,
+                    None,
+                )
                 .await;
         }
         let path = || payload.get("path").and_then(Value::as_str).unwrap_or("");
@@ -1080,7 +1120,8 @@ impl WorkspaceExecutionRouter {
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 let plan = if execution_mode == "windows-mxc" {
-                    crate::job_mxc_adapter::build_mxc_job(
+                    let declared_roots = self.ensurer.declared_roots(workspace_id).await?;
+                    crate::job_mxc_adapter::build_mxc_job_with_roots(
                         crate::job_mxc_adapter::MxcJobRequest {
                             workspace_path: workspace_path.to_string(),
                             command: command.to_string(),
@@ -1089,6 +1130,7 @@ impl WorkspaceExecutionRouter {
                             env,
                             timeout_secs: timeout_ms.div_ceil(1_000),
                         },
+                        &declared_roots,
                         &self.job_engine.output_dir(&job_id),
                     )
                     .map_err(job_engine_error)?
@@ -1646,6 +1688,7 @@ impl WorkspaceExecutionRouter {
                 .execute_mxc_file_operation(
                     workspace_id,
                     &instance.workspace_path,
+                    None,
                     "write_binary",
                     serde_json::json!({"path": path}),
                     Some(data),
@@ -1684,6 +1727,23 @@ impl WorkspaceExecutionRouter {
                 reason,
             },
         )?;
+        if instance.execution_mode == "windows-mxc" {
+            let result = self
+                .execute_mxc_file_operation(
+                    workspace_id,
+                    &instance.workspace_path,
+                    Some(root_id),
+                    "write_binary",
+                    serde_json::json!({"path": path}),
+                    Some(data),
+                )
+                .await?;
+            return Ok(result
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("ok")
+                .to_string());
+        }
         fs::write_file_binary(path, data, &boundary.host_path.to_string_lossy()).await
     }
 
@@ -2436,9 +2496,9 @@ mod file_operation_tests {
     /// `execution mode × primary/declared root × read/write`.
     ///
     /// * primary root → supported on every mode (delegation keeps pre-M7 behavior);
-    /// * any declared root → supported only on `windows-host`;
-    /// * `windows-mxc`/`docker` declared-root → explicit per-root code, never a
-    ///   silent primary-root fallback.
+    /// * any declared root → supported on `windows-host` and `windows-mxc`;
+    /// * `docker` declared-root → explicit per-root code, never a silent
+    ///   primary-root fallback.
     ///
     /// 反证: dropping `windows-host` from [`MULTI_ROOT_EXECUTION_MODES`] turns
     /// every host/declared cell red (tested during task-958 evidence).
@@ -2464,7 +2524,8 @@ mod file_operation_tests {
                     (RootAccess::Write, write_ops.as_slice()),
                 ] {
                     for operation in operations {
-                        let expected_supported = is_primary || mode == "windows-host";
+                        let expected_supported =
+                            is_primary || MULTI_ROOT_EXECUTION_MODES.contains(&mode);
                         let result = declared_root_operation_support(mode, is_primary, operation);
                         assert_eq!(
                             result.is_ok(),

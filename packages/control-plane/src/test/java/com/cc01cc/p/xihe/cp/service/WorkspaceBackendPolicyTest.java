@@ -97,4 +97,27 @@ class WorkspaceBackendPolicyTest {
     void nullWorkspaceIsIgnored() {
         policy(null).requireOperationAllowed(null);
     }
+
+    @Test
+    void windowsMxcAllowsASecondRoot() {
+        WorkspaceBackendPolicy.requireRootCountSupported("windows-mxc", 2);
+        assertTrue(WorkspaceBackendPolicy.supportsMultipleRoots("windows-mxc"));
+        assertTrue(WorkspaceBackendPolicy.supportsMultipleRoots("WINDOWS-MXC"));
+    }
+
+    @Test
+    void windowsHostAndMxcAreTheOnlyMultiRootModes() {
+        assertTrue(WorkspaceBackendPolicy.supportsMultipleRoots("windows-host"));
+        assertTrue(WorkspaceBackendPolicy.supportsMultipleRoots("WINDOWS-MXC"));
+        assertFalse(WorkspaceBackendPolicy.supportsMultipleRoots("docker"));
+        assertFalse(WorkspaceBackendPolicy.supportsMultipleRoots(null));
+
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> WorkspaceBackendPolicy.requireRootCountSupported("docker", 2));
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatus());
+        assertTrue(error.getMessage().contains("windows-mxc"));
+
+        // A single root is always allowed, even on docker.
+        WorkspaceBackendPolicy.requireRootCountSupported("docker", 1);
+    }
 }

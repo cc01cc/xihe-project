@@ -351,11 +351,12 @@ pub struct WriteBinaryQuery {
 /// * `rootId` present → declared roots are read from the ExecutionSpec and the
 ///   requested root selected; unknown ids fail closed (`400`, via
 ///   `fs::select_root_boundary`).
-/// * task-958 (R50/R54/R55): there is no read/write split at this layer. The
-///   mode matrix lives one layer down
+/// * task-958/task-979 (R50/R54/R55): there is no read/write split at this
+///   layer. The mode matrix lives one layer down
 ///   (`WorkspaceExecutionRouter::declared_root_operation_support`):
-///   `windows-host` serves reads and writes from any declared root, while
-///   `windows-mxc`/`docker` fail closed with `PER_ROOT_READ_UNSUPPORTED` /
+///   `windows-host` serves reads and writes from any declared root and
+///   `windows-mxc` does too (policy grants every root, worker routes by
+///   `rootId`), while `docker` fails closed with `PER_ROOT_READ_UNSUPPORTED` /
 ///   `PER_ROOT_EXECUTION_UNSUPPORTED` rather than silently being served from
 ///   the primary root (D39-5: serving the wrong root would be a boundary lie).
 async fn resolve_request_root(
@@ -1404,7 +1405,7 @@ mod tests {
     /// PLAN-0639 M7 (VM12): a well-known non-primary root resolves its boundary and
     /// is now **served** for reads (it used to answer the write gate's 501, which
     /// made declared-root files unopenable in the UI). The remaining 501 is the
-    /// execution-mode gate (`PER_ROOT_READ_UNSUPPORTED`, e.g. docker/MXC), which is
+    /// execution-mode gate (`PER_ROOT_READ_UNSUPPORTED`, e.g. docker), which is
     /// a different code on purpose so the two failures stay distinguishable.
     #[tokio::test]
     async fn test_read_non_primary_root_is_routed_not_write_gated() {
@@ -1502,23 +1503,24 @@ mod tests {
         assert!(!root_b.path().join("from-root-b.txt").exists());
     }
 
-    /// task-958: a mode that cannot address a declared root must answer the
-    /// explicit 501 code instead of silently writing to the primary root.
+    /// task-958/task-979: a mode that still cannot address a declared root
+    /// (`docker`) must answer the explicit 501 code instead of silently writing
+    /// to the primary root. MXC is no longer in that set: it grants every
+    /// declared root and routes the file worker by `rootId`.
     /// (Docker roots are not reachable here: CP refuses to declare them at all,
     /// see WorkspaceBackendPolicy.requireRootCountSupported; its runtime code is
     /// pinned by the unit matrix in `executor.rs`.)
     #[tokio::test]
-    async fn test_declared_root_write_mxc_fails_closed_501() {
-        for mode in ["windows-mxc"] {
+    async fn test_declared_root_write_docker_fails_closed_501() {
+        // No explicit executionMode = the historical docker default; the
+        // declared-root gate must still answer 501 before any dispatch.
+        for mode in ["docker-default"] {
             let primary = TempDir::new().unwrap();
             let root_b = TempDir::new().unwrap();
-            let (app, ws_id, _dir, _cp) = setup_ws_light_mode(
-                serde_json::json!([
-                    {"rootId": "ws-primary", "hostPath": primary.path().to_string_lossy()},
-                    {"rootId": "root-b", "hostPath": root_b.path().to_string_lossy()},
-                ]),
-                mode,
-            )
+            let (app, ws_id, _dir, _cp) = setup_ws_light(serde_json::json!([
+                {"rootId": "ws-primary", "hostPath": primary.path().to_string_lossy()},
+                {"rootId": "root-b", "hostPath": root_b.path().to_string_lossy()},
+            ]))
             .await;
 
             let state = State(app);

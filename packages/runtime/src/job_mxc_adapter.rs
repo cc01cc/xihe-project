@@ -6,6 +6,7 @@
 //! the policy (decision #3/#5) and never leaks the artifact path upward.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::job_engine::{JobEngineError, LaunchPlan};
@@ -27,6 +28,20 @@ pub fn build_mxc_job(
     request: MxcJobRequest,
     job_output_dir: &Path,
 ) -> Result<LaunchPlan, JobEngineError> {
+    build_mxc_job_with_roots(request, &[], job_output_dir)
+}
+
+/// task-979: build the MXC job policy with **every** declared root granted.
+///
+/// `roots` is the ordered `(rootId, hostPath)` declaration from the
+/// ExecutionSpec. MXC's own policy already accepts many read/write roots
+/// (`MxcPolicyRequest::read_write_roots: Vec<PathBuf>`); this function is the
+/// adapter-side wiring that turns that capability into per-root grants.
+pub fn build_mxc_job_with_roots(
+    request: MxcJobRequest,
+    roots: &[(String, String)],
+    job_output_dir: &Path,
+) -> Result<LaunchPlan, JobEngineError> {
     let workspace = PathBuf::from(&request.workspace_path);
     let cwd = request
         .cwd
@@ -36,7 +51,20 @@ pub fn build_mxc_job(
     let executable =
         std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_else(|_| "wxc-exec.exe".to_string());
     let file_worker = request.args.iter().any(|arg| arg == "--file-worker");
-    let file_worker_parent = workspace.parent().map(Path::to_path_buf);
+    let mut args = request.args;
+    let granted_roots = mxc_granted_roots(&workspace, roots);
+    let mut worker_parents = BTreeSet::new();
+    for root in &granted_roots {
+        if let Some(parent) = root.parent() {
+            worker_parents.insert(parent.to_path_buf());
+        }
+    }
+    if file_worker {
+        for (root_id, host_path) in roots {
+            args.push("--root".to_string());
+            args.push(format!("{root_id}={host_path}"));
+        }
+    }
     let mut worker_env = request.env;
     if file_worker && worker_env.is_empty() {
         // task-544: the worker identifies itself through its argv
@@ -46,7 +74,7 @@ pub fn build_mxc_job(
     }
     let policy = build_mxc_policy(&MxcPolicyRequest {
         program: request.command,
-        args: request.args,
+        args,
         cwd: cwd.clone(),
         env: worker_env,
         timeout_ms: request.timeout_secs.saturating_mul(1_000),
@@ -55,11 +83,11 @@ pub fn build_mxc_job(
         // file-worker executable; its lexical/canonical checks still reject
         // every caller-supplied path outside WorkspaceStorage.
         read_only_roots: if file_worker {
-            file_worker_parent.into_iter().collect()
+            worker_parents.into_iter().collect()
         } else {
             Vec::new()
         },
-        read_write_roots: vec![workspace.clone()],
+        read_write_roots: granted_roots.clone(),
     });
     std::fs::create_dir_all(job_output_dir).map_err(|error| {
         JobEngineError::Unavailable(format!("job output dir creation failed: {error}"))
@@ -91,10 +119,26 @@ pub fn build_mxc_job(
         shell: false,
         grants: FilesystemPolicy {
             read_only_roots: Vec::new(),
-            read_write_roots: vec![workspace],
+            read_write_roots: granted_roots,
         },
         policy_artifact: Some(policy_path),
     })
+}
+
+/// task-979: the primary root plus every declared root, de-duplicated by path.
+fn mxc_granted_roots(workspace: &Path, roots: &[(String, String)]) -> Vec<PathBuf> {
+    let mut granted = vec![workspace.to_path_buf()];
+    for (_, host_path) in roots {
+        let trimmed = host_path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(trimmed);
+        if path.is_absolute() && !granted.contains(&path) {
+            granted.push(path);
+        }
+    }
+    granted
 }
 
 /// 0390-shaped capability for the MXC backend; `canIsolateFilesystem=true` is
@@ -152,6 +196,65 @@ mod tests {
             policy["filesystem"]["readwritePaths"]
                 .as_array()
                 .is_some_and(|paths| !paths.is_empty())
+        );
+        std::fs::remove_dir_all(root).expect("remove adapter test output");
+    }
+
+    /// task-979: every declared root gets its own read/write grant in one MXC
+    /// policy, and the file worker receives the root table it routes by.
+    #[test]
+    fn multi_root_policy_grants_each_declared_root() {
+        let root = PathBuf::from("target/.tmp")
+            .join(format!("xihe-mxc-multi-root-test-{}", uuid::Uuid::new_v4()));
+        let primary = std::env::temp_dir().join("xihe-mxc-primary");
+        let second = std::env::temp_dir().join("xihe-mxc-second");
+        let plan = build_mxc_job_with_roots(
+            MxcJobRequest {
+                workspace_path: primary.to_string_lossy().into_owned(),
+                command: "xihe-runtime.exe".to_string(),
+                args: vec!["--file-worker".to_string()],
+                cwd: None,
+                env: BTreeMap::new(),
+                timeout_secs: 30,
+            },
+            &[
+                (
+                    "ws-primary".to_string(),
+                    primary.to_string_lossy().into_owned(),
+                ),
+                ("root-b".to_string(), second.to_string_lossy().into_owned()),
+            ],
+            &root,
+        )
+        .expect("mxc multi-root plan");
+        let policy_path = plan.policy_artifact.clone().expect("policy artifact");
+        let policy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&policy_path).expect("policy file"))
+                .expect("policy json");
+        println!(
+            "task-979 multi-root policy filesystem: {}",
+            policy["filesystem"]
+        );
+        let granted = policy["filesystem"]["readwritePaths"]
+            .as_array()
+            .expect("readwritePaths")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            granted.len(),
+            2,
+            "each root must be granted once: {granted:?}"
+        );
+        assert!(granted.iter().any(|path| path.contains("xihe-mxc-second")));
+        assert_eq!(plan.grants.read_write_roots.len(), 2);
+        let command_line = policy["process"]["commandLine"]
+            .as_str()
+            .expect("commandLine");
+        assert!(command_line.contains("--root"), "{command_line}");
+        assert!(
+            command_line.contains(&format!("root-b={}", second.to_string_lossy())),
+            "{command_line}"
         );
         std::fs::remove_dir_all(root).expect("remove adapter test output");
     }

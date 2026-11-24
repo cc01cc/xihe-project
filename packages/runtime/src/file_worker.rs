@@ -5,6 +5,8 @@
 //! JSON header followed by an unsigned little-endian length and exactly that
 //! many raw bytes.
 
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
@@ -39,11 +41,11 @@ struct OperationError {
 }
 
 /// Encodes a binary write frame for the worker stdin.
-pub fn encode_binary_request(path: &str, data: &[u8]) -> Result<Vec<u8>> {
+pub fn encode_binary_request(path: &str, root_id: Option<&str>, data: &[u8]) -> Result<Vec<u8>> {
     ensure_payload_size(data.len())?;
     let header = serde_json::to_vec(&serde_json::json!({
         "operation": "write_binary",
-        "payload": {"path": path},
+        "payload": {"path": path, "rootId": root_id},
     }))
     .map_err(|error| RuntimeError::Command(format!("serialize file worker header: {error}")))?;
     let mut frame = Vec::with_capacity(header.len() + 1 + 8 + data.len());
@@ -71,6 +73,7 @@ pub async fn run(args: &[String]) -> anyhow::Result<()> {
         .find(|pair| pair[0] == "--workspace")
         .map(|pair| pair[1].clone())
         .ok_or_else(|| anyhow::anyhow!("--workspace is required for --file-worker"))?;
+    let roots = parse_root_table(args)?;
 
     let stdin = tokio::io::stdin();
     let mut reader = BufReader::new(stdin);
@@ -101,7 +104,7 @@ pub async fn run(args: &[String]) -> anyhow::Result<()> {
         None
     };
 
-    let response = match dispatch(&request, binary.as_deref(), &workspace).await {
+    let response = match dispatch(&request, binary.as_deref(), &workspace, &roots).await {
         Ok(result) => OperationResponse {
             ok: true,
             result,
@@ -125,16 +128,65 @@ pub async fn run(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// task-979: parse repeated `--root <rootId>=<absolute hostPath>` arguments.
+fn parse_root_table(args: &[String]) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    let mut roots = Vec::new();
+    for pair in args.windows(2) {
+        if pair[0] != "--root" {
+            continue;
+        }
+        let (root_id, host_path) = pair[1]
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("--root must be <rootId>=<absolute hostPath>"))?;
+        if root_id.trim().is_empty() || host_path.trim().is_empty() {
+            anyhow::bail!("--root carries a blank rootId or hostPath");
+        }
+        let path = PathBuf::from(host_path);
+        if !path.is_absolute() {
+            anyhow::bail!("--root hostPath is not absolute: {host_path}");
+        }
+        roots.push((root_id.to_string(), path));
+    }
+    Ok(roots)
+}
+
+/// task-979: select the declared root boundary for one operation. No `rootId`
+/// keeps the pre-979 primary-root behavior; an unknown id fails closed.
+fn resolve_boundary<'a>(
+    workspace: &'a str,
+    roots: &'a [(String, PathBuf)],
+    root_id: Option<&str>,
+) -> Result<&'a Path> {
+    match root_id {
+        None => Ok(Path::new(workspace)),
+        Some(root_id) if root_id.trim().is_empty() => {
+            Err(RuntimeError::InvalidPath("rootId must not be blank".into()))
+        }
+        Some(root_id) => roots
+            .iter()
+            .find(|(id, _)| id == root_id)
+            .map(|(_, path)| path.as_path())
+            .ok_or_else(|| RuntimeError::InvalidPath(format!("unknown rootId {root_id:?}"))),
+    }
+}
+
 async fn dispatch(
     request: &OperationRequest,
     binary: Option<&[u8]>,
     workspace: &str,
+    roots: &[(String, PathBuf)],
 ) -> Result<Value> {
     let payload = &request.payload;
+    let boundary = resolve_boundary(
+        workspace,
+        roots,
+        payload.get("rootId").and_then(Value::as_str),
+    )?;
+    let workspace = boundary.to_string_lossy().into_owned();
     let path = || payload.get("path").and_then(Value::as_str).unwrap_or("");
     match request.operation.as_str() {
         "read_file" => Ok(serde_json::json!({
-            "content": fs::read_file(path(), workspace).await?
+            "content": fs::read_file(path(), &workspace).await?
         })),
         "read_file_range" => serde_json::to_value(
             fs::read_file_range(
@@ -147,14 +199,14 @@ async fn dispatch(
                     .get("limit")
                     .and_then(Value::as_u64)
                     .map(|value| value as usize),
-                workspace,
+                &workspace,
             )
             .await?,
         )
         .map_err(|error| RuntimeError::Command(format!("serialize read result: {error}"))),
         "list_directory" => {
             let path = path().to_string();
-            let workspace = workspace.to_string();
+            let workspace = workspace.clone();
             let entries =
                 tokio::task::spawn_blocking(move || fs::list_directory(&path, &workspace))
                     .await
@@ -167,29 +219,29 @@ async fn dispatch(
                 .and_then(Value::as_str)
                 .unwrap_or("*"),
             path(),
-            workspace,
+            &workspace,
         )?)
         .map_err(|error| RuntimeError::Command(format!("serialize glob result: {error}"))),
         "grep" => serde_json::to_value(fs::grep_files(
             payload.get("pattern").and_then(Value::as_str).unwrap_or(""),
             path(),
-            workspace,
+            &workspace,
         )?)
         .map_err(|error| RuntimeError::Command(format!("serialize grep result: {error}"))),
-        "get_file_info" => serde_json::to_value(fs::get_file_info(path(), workspace)?)
+        "get_file_info" => serde_json::to_value(fs::get_file_info(path(), &workspace)?)
             .map_err(|error| RuntimeError::Command(format!("serialize file info: {error}"))),
         "write_file" => {
             let content = payload.get("content").and_then(Value::as_str).unwrap_or("");
             ensure_payload_size(content.len())?;
             Ok(serde_json::json!({
-                "message": fs::write_file(path(), content, workspace).await?
+                "message": fs::write_file(path(), content, &workspace).await?
             }))
         }
         "write_binary" => {
             let data =
                 binary.ok_or_else(|| RuntimeError::InvalidPath("missing binary frame".into()))?;
             Ok(serde_json::json!({
-                "message": fs::write_file_binary(path(), data, workspace).await?
+                "message": fs::write_file_binary(path(), data, &workspace).await?
             }))
         }
         "edit_file" => {
@@ -219,40 +271,40 @@ async fn dispatch(
                         .or_else(|| payload.get("replace_all"))
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
-                    workspace,
+                    &workspace,
                 )
                 .await?,
             )
             .map_err(|error| RuntimeError::Command(format!("serialize edit result: {error}")))
         }
         "delete_file" => {
-            Ok(serde_json::json!({"message": fs::delete_file(path(), workspace).await?}))
+            Ok(serde_json::json!({"message": fs::delete_file(path(), &workspace).await?}))
         }
         "delete_directory" => Ok(serde_json::json!({
             "message": fs::delete_directory(
                 path(),
                 payload.get("recursive").and_then(Value::as_bool).unwrap_or(false),
-                workspace,
+                &workspace,
             ).await?
         })),
-        "mkdir" => Ok(serde_json::json!({"message": fs::mkdir(path(), workspace).await?})),
+        "mkdir" => Ok(serde_json::json!({"message": fs::mkdir(path(), &workspace).await?})),
         "move_file" => Ok(serde_json::json!({
             "message": fs::move_file(
                 payload.get("from").and_then(Value::as_str).unwrap_or(""),
                 payload.get("to").and_then(Value::as_str).unwrap_or(""),
-                workspace,
+                &workspace,
             ).await?
         })),
         "copy_file" => {
             let from = payload.get("from").and_then(Value::as_str).unwrap_or("");
             let to = payload.get("to").and_then(Value::as_str).unwrap_or("");
-            if fs::get_file_info(from, workspace)?.is_dir {
+            if fs::get_file_info(from, &workspace)?.is_dir {
                 return Err(RuntimeError::Unsupported {
                     capability: "file-operation:copy_file".into(),
                     reason: "UNSUPPORTED_DIRECTORY_COPY".into(),
                 });
             }
-            Ok(serde_json::json!({"message": fs::copy_file(from, to, workspace).await?}))
+            Ok(serde_json::json!({"message": fs::copy_file(from, to, &workspace).await?}))
         }
         "watch_directory" | "extract_pdf_text" => Err(RuntimeError::Unsupported {
             capability: format!("file-operation:{}", request.operation),
@@ -260,7 +312,7 @@ async fn dispatch(
         }),
         "apply_patch" => serde_json::to_value(
             fs::apply_patch_at(
-                workspace,
+                &workspace,
                 payload
                     .get("patches")
                     .and_then(Value::as_array)
@@ -320,7 +372,7 @@ mod tests {
 
     #[test]
     fn binary_frame_has_length_prefix_and_exact_payload() {
-        let frame = encode_binary_request("x.bin", &[0, 1, 0xff]).expect("frame");
+        let frame = encode_binary_request("x.bin", None, &[0, 1, 0xff]).expect("frame");
         let header_end = frame
             .iter()
             .position(|byte| *byte == b'\n')
@@ -334,8 +386,51 @@ mod tests {
 
     #[test]
     fn binary_frame_rejects_payload_over_cap() {
-        let error = encode_binary_request("x.bin", &vec![0; MAX_FILE_OPERATION_BYTES + 1])
+        let error = encode_binary_request("x.bin", None, &vec![0; MAX_FILE_OPERATION_BYTES + 1])
             .expect_err("oversized payload");
         assert!(matches!(error, RuntimeError::PayloadTooLarge { .. }));
+    }
+
+    /// task-979: the worker must route a `rootId` to that root's own host path
+    /// instead of always resolving against the primary `--workspace`.
+    #[tokio::test]
+    async fn root_table_routes_reads_and_writes_to_the_selected_root() {
+        let primary = tempfile::TempDir::new().expect("primary tempdir");
+        let root_b = tempfile::TempDir::new().expect("root b tempdir");
+        let roots = vec![
+            ("ws-primary".to_string(), primary.path().to_path_buf()),
+            ("root-b".to_string(), root_b.path().to_path_buf()),
+        ];
+
+        let write = OperationRequest {
+            operation: "write_file".to_string(),
+            payload: serde_json::json!({"path": "probe.txt", "content": "from-root-b", "rootId": "root-b"}),
+        };
+        dispatch(&write, None, primary.path().to_str().unwrap(), &roots)
+            .await
+            .expect("write through root-b");
+        assert_eq!(
+            std::fs::read_to_string(root_b.path().join("probe.txt")).expect("root b file"),
+            "from-root-b"
+        );
+        assert!(!primary.path().join("probe.txt").exists());
+
+        let read = OperationRequest {
+            operation: "read_file".to_string(),
+            payload: serde_json::json!({"path": "probe.txt", "rootId": "root-b"}),
+        };
+        let value = dispatch(&read, None, primary.path().to_str().unwrap(), &roots)
+            .await
+            .expect("read through root-b");
+        assert_eq!(value["content"], "from-root-b");
+
+        let unknown = OperationRequest {
+            operation: "read_file".to_string(),
+            payload: serde_json::json!({"path": "probe.txt", "rootId": "root-unknown"}),
+        };
+        assert!(matches!(
+            dispatch(&unknown, None, primary.path().to_str().unwrap(), &roots).await,
+            Err(RuntimeError::InvalidPath(_))
+        ));
     }
 }
