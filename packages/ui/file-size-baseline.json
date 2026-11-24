@@ -1,6 +1,6 @@
 {
     "$comment": "文件长度 ratchet 基线（task-1030）：行数 + 字节双阈值，存量只许变小。只能由 node scripts/check-file-size.mjs --write-baseline 生成/收缩，勿手改；新增超标文件或基线内变大都会被限制。",
-    "total": 63,
+    "total": 61,
     "files": {
         "src/components/settings/AgentPrincipalDetailDrawer.vue": {
             "lines": 1641,
@@ -47,16 +47,12 @@
             "bytes": 24132
         },
         "src/components/settings/SettingsSidebar.vue": {
-            "lines": 644,
-            "bytes": 35751
+            "lines": 639,
+            "bytes": 35675
         },
         "src/components/sidebar/Sidebar.vue": {
-            "lines": 620,
-            "bytes": 30872
-        },
-        "src/composables/api.ts": {
-            "lines": 6682,
-            "bytes": 283793
+            "lines": 626,
+            "bytes": 31413
         },
         "src/composables/messageScroller.ts": {
             "lines": 647,
@@ -178,10 +174,6 @@
             "lines": 1451,
             "bytes": 64736
         },
-        "src/i18n/index.ts": {
-            "lines": 9431,
-            "bytes": 587587
-        },
         "src/i18n/messages/chat.ts": {
             "lines": 1295,
             "bytes": 83307
@@ -259,5 +251,5 @@
         "src/test-utils/virtual-modules.d.ts": "纯类型声明（.d.ts），无运行时代码",
         "src/vite-env.d.ts": "纯类型声明（.d.ts），无运行时代码"
     },
-    "generatedAt": "2026-11-24T13:46:36.656Z"
+    "generatedAt": "2026-11-24T16:30:21.067Z"
 }
