@@ -64,18 +64,24 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
     private String workspaceId;
     private String userId;
 
-    /** The same registry the service loads — one built-in template per chat-operation entry. */
-    private int builtinChatApiTypeCount() throws Exception {
+    /** The same registry the service loads — one built-in template per API Type entry. */
+    private int builtinApiTypeCount() throws Exception {
         try (var input = new org.springframework.core.io.ClassPathResource(
                 "api-input-types/api-input-types.json").getInputStream()) {
-            int count = 0;
+            return json.readTree(input).size();
+        }
+    }
+
+    private String apiTypeOperation(String type, int version) throws Exception {
+        try (var input = new org.springframework.core.io.ClassPathResource(
+                "api-input-types/api-input-types.json").getInputStream()) {
             for (JsonNode entry : json.readTree(input)) {
-                if ("chat".equals(entry.path("operation").asText())) {
-                    count++;
+                if (type.equals(entry.path("apiTypeId").asText()) && version == entry.path("version").asInt()) {
+                    return entry.path("operation").asText();
                 }
             }
-            return count;
         }
+        throw new AssertionError("API Type not found: " + type + "@" + version);
     }
 
     @BeforeEach
@@ -97,16 +103,19 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         assertEquals(200, builtin.statusCode());
         JsonNode definitions = json.readTree(json.readTree(builtin.body()).path("templates").asText());
         // No hard-coded total: ApiRequestTemplateService.builtins() emits TWO immutable revisions per
-        // chat-operation entry of the SAME classpath registry the service loads — v1 is the frozen
-        // pre-PLAN-0632 seed (no context slots), v2 is the current seed carrying ${xh.skill_catalog}
-        // and ${xh.agent_memory}. Deriving the expectation from that file keeps this green for the
-        // next apiType.
-        assertEquals(builtinChatApiTypeCount() * 2, definitions.size());
+        // entry of the SAME classpath registry the service loads (task-965: every operation, not just
+        // chat) — v1 is the frozen pre-PLAN-0632 seed (no context slots), v2 is the current seed
+        // carrying ${xh.skill_catalog} and ${xh.agent_memory}. Deriving the expectation from that file
+        // keeps this green for the next apiType.
+        assertEquals(builtinApiTypeCount() * 2, definitions.size());
         assertTrue(definitions.toString().contains("dashscope-generation"),
                 "every chat apiType (incl. PLAN-0624 dashscope-generation) ships a built-in template");
+        assertTrue(definitions.toString().contains("dashscope-multimodal-embedding"),
+                "task-965: the embedding apiType ships a built-in template too");
         // PLAN-0632 G-0: v1 must stay slot-free, v2 must carry both slots, and every seeded body must
         // pass the independent publish validator — a seed nobody can publish would only surface as a
-        // 400 for whoever pinned it.
+        // 400 for whoever pinned it. task-965: non-chat seeds are library-only (requireChat still
+        // rejects them from Sessions), so only chat seeds are expected to pass the chat validator.
         java.util.Map<String, Integer> revisionsSeen = new java.util.HashMap<>();
         for (JsonNode definition : definitions) {
             String type = definition.path("apiTypeId").asText();
@@ -114,8 +123,10 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
             int revision = definition.path("version").asInt();
             String bodySource = definition.path("bodySource").asText();
             revisionsSeen.merge(type, 1, Integer::sum);
-            assertTrue(apiRequestValidator.validate(type, apiTypeVersion, bodySource).valid(),
-                    "built-in seed must be publishable: " + type + "@" + apiTypeVersion + " v" + revision);
+            if ("chat".equals(apiTypeOperation(type, apiTypeVersion))) {
+                assertTrue(apiRequestValidator.validate(type, apiTypeVersion, bodySource).valid(),
+                        "built-in seed must be publishable: " + type + "@" + apiTypeVersion + " v" + revision);
+            }
             if (revision == 1) {
                 assertFalse(bodySource.contains("${xh.skill_catalog}") || bodySource.contains("${xh.agent_memory}"),
                         "revision 1 is frozen: it must never gain the G-0 slots");
@@ -125,7 +136,7 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
                         "revision 2 seeds both context-block slots");
             }
         }
-        revisionsSeen.values().forEach(count -> assertEquals(2, count, "each chat apiType ships v1 + v2"));
+        revisionsSeen.values().forEach(count -> assertEquals(2, count, "each apiType ships v1 + v2"));
         String source = "{\n  \"model\":\"${xh.model}\", \"messages\":[{\"role\":\"user\",\"content\":\"${xh.user_input}\"}]\n}";
         String id = UUID.randomUUID().toString();
         var draft = json.createObjectNode().put("id", id).put("version", 1).put("name", "Raw source")
@@ -142,6 +153,21 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         assertProblem(putTemplate(draft), 409, "API_REQUEST_TEMPLATE_REVISION_IMMUTABLE");
         assertProblem(send("PUT", "/api/v1/config/user/api-request-templates", json.writeValueAsString(Map.of("templates", "[]"))),
                 409, "API_REQUEST_TEMPLATE_REVISION_IMMUTABLE");
+    }
+
+    @Test
+    void embeddingTemplateCanExistInLibraryWithoutEnteringTheChatDomain() throws Exception {
+        var embedding = json.createObjectNode().put("id", UUID.randomUUID().toString()).put("version", 1)
+                .put("name", "Embedding copy").put("description", "isolated")
+                .put("apiTypeId", "dashscope-multimodal-embedding").put("apiTypeVersion", 1)
+                .put("bodySource", "{\"model\":\"${xh.model}\",\"input\":{\"contents\":[{\"text\":\"${xh.user_input}\"}]},"
+                        + "\"parameters\":{\"dimension\":1024}}")
+                .put("status", "draft");
+        assertEquals(200, putTemplate(embedding).statusCode(), "the template domain is no longer chat-only");
+        var read = json.readTree(json.readTree(send("GET",
+                "/api/v1/config/api-request-templates?layer=user", null).body()).path("templates").asText());
+        assertEquals("dashscope-multimodal-embedding", read.get(0).path("apiTypeId").asText());
+        assertEquals("draft", read.get(0).path("status").asText());
     }
 
     @Test

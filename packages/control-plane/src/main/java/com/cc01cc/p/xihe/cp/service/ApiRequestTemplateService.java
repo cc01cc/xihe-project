@@ -371,7 +371,7 @@ public class ApiRequestTemplateService {
             String status = value.path("status").asText();
             if (!value.isObject() || !seen.add(key) || version < 1 || !value.path("bodySource").isTextual()
                     || !value.path("name").isTextual() || !Set.of("draft", "published").contains(status)
-                    || !types.contains(type, typeVersion) || !"chat".equals(types.operation(type, typeVersion))) {
+                    || !types.contains(type, typeVersion)) {
                 throw invalid("Invalid API Request Template record");
             }
             for (JsonNode old : current) {
@@ -702,6 +702,11 @@ public class ApiRequestTemplateService {
                 uuid(session.getUserId()), uuid(session.getWorkspaceId()), "", json.createArrayNode());
     }
 
+    /**
+     * Session admission gate. task-965 widened the template <b>library</b> to every operation, but
+     * "can exist / can be copied" must never be read as "can be used by a Session": an embedding
+     * connection or template is still refused here with {@code API_TYPE_OPERATION_MISMATCH}.
+     */
     public void requireChat(ProviderConnection connection) {
         if (!"chat".equals(types.operation(connection.getApiTypeId(), connection.getApiTypeVersion()))) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "API_TYPE_OPERATION_MISMATCH", "Chat requires operation=chat");
@@ -1104,24 +1109,29 @@ public class ApiRequestTemplateService {
     }
 
     /**
-     * PLAN-0632 Gate G-0: one built-in seed per (chat apiType, revision). Revision 1 is FROZEN
+     * PLAN-0632 Gate G-0: one built-in seed per (apiType, revision). Revision 1 is FROZEN
      * byte-for-byte — it is what every Session/connection pinned before G-0 resolves to, so changing
      * it in place would silently rewrite a published revision (and break
      * {@code API_REQUEST_TEMPLATE_REVISION_IMMUTABLE} equality checks against stored copies).
-     * Revision 2 is the current seed and carries the two context-block slots. Existing pins therefore
-     * keep working unchanged and simply do not carry the new blocks — upgrading does NOT retro-fit a
-     * slot into an already published template.
+     * Revision 2 is the current seed and carries the two context-block slots for chat types. Existing
+     * pins therefore keep working unchanged and simply do not carry the new blocks — upgrading does
+     * NOT retro-fit a slot into an already published template.
+     *
+     * <p>task-965: the template domain is no longer chat-only. Every entry of the API Type registry
+     * gets a built-in seed, so an {@code embedding} template exists in the instance library and is
+     * visible/copyable. "Can exist" is deliberately not the same as "can be used by a Session":
+     * {@link #requireChat(ProviderConnection)} still hard-rejects non-chat connections.</p>
      */
     public List<JsonNode> builtins() {
         List<JsonNode> result = new ArrayList<>();
         for (Map<String, Object> type : types.list()) {
-            if (!"chat".equals(type.get("operation"))) {
-                continue;
-            }
             String id = type.get("apiTypeId").toString();
             int version = ((Number) type.get("version")).intValue();
-            result.add(builtin(id, version, 1, builtinDisplayName(id) + BUILTIN_NAME_SUFFIX, legacyBody(id)));
-            result.add(builtin(id, version, 2, builtinDisplayName(id) + BUILTIN_NAME_SUFFIX, contextBody(id)));
+            String operation = java.util.Objects.toString(type.get("operation"), "");
+            result.add(builtin(id, version, 1, builtinDisplayName(id) + BUILTIN_NAME_SUFFIX,
+                    legacyBody(id, operation)));
+            result.add(builtin(id, version, 2, builtinDisplayName(id) + BUILTIN_NAME_SUFFIX,
+                    contextBody(id, operation)));
         }
         return List.copyOf(result);
     }
@@ -1149,15 +1159,18 @@ public class ApiRequestTemplateService {
             "openai-chat-completions", "OpenAI Chat Completions",
             "anthropic-messages", "Anthropic Messages",
             "mimo-responses", "MiMo Responses",
-            "dashscope-generation", "DashScope Text Generation");
+            "dashscope-generation", "DashScope Text Generation",
+            "dashscope-multimodal-embedding", "DashScope Multimodal Embedding");
 
     private static String builtinDisplayName(String apiTypeId) {
         return BUILTIN_DISPLAY_NAMES.getOrDefault(apiTypeId, apiTypeId);
     }
 
     /** Revision 1 (frozen): the pre-G-0 seed, no context-block slots. */
-    private String legacyBody(String id) {
-        if (id.equals("mimo-responses")) {
+    private String legacyBody(String id, String operation) {
+        if ("embedding".equals(operation)) {
+            return embeddingBody();
+        } else if (id.equals("mimo-responses")) {
             return "{\"model\":\"${xh.model}\",\"input\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"instructions\":\"${xh.agent_instructions}\",\"tools\":[\"${xh.tools}\"],\"stream\":true}";
         } else if (id.equals("anthropic-messages")) {
             return "{\"model\":\"${xh.model}\",\"system\":\"${xh.agent_instructions}\",\"messages\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"tools\":[\"${xh.tools}\"],\"max_tokens\":4096,\"stream\":true}";
@@ -1174,14 +1187,26 @@ public class ApiRequestTemplateService {
      * on purpose: both slots render empty until PLAN-0628/0629 land, and a provider message whose
      * content is the empty string is rejected by some upstreams, while trailing newlines are harmless.
      */
-    private String contextBody(String id) {
-        if (id.equals("mimo-responses")) {
+    private String contextBody(String id, String operation) {
+        if ("embedding".equals(operation)) {
+            // Embedding requests have no conversation/context blocks: both revisions intentionally
+            // share the same wire shape (the seed exists for the library, not for Session admission).
+            return embeddingBody();
+        } else if (id.equals("mimo-responses")) {
             return "{\"model\":\"${xh.model}\",\"input\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"instructions\":\"${xh.agent_instructions}\\n\\n${xh.skill_catalog}\\n\\n${xh.agent_memory}\",\"tools\":[\"${xh.tools}\"],\"stream\":true}";
         } else if (id.equals("anthropic-messages")) {
             return "{\"model\":\"${xh.model}\",\"system\":\"${xh.agent_instructions}\\n\\n${xh.skill_catalog}\\n\\n${xh.agent_memory}\",\"messages\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"tools\":[\"${xh.tools}\"],\"max_tokens\":4096,\"stream\":true}";
         } else {
             return "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"system\",\"content\":\"${xh.agent_instructions}\\n\\n${xh.skill_catalog}\\n\\n${xh.agent_memory}\"},\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"tools\":[\"${xh.tools}\"],\"stream\":true}";
         }
+    }
+
+    /**
+     * embedding wire shape of {@code dashscope-multimodal-embedding}:
+     * {@code model, input.contents[{text}], parameters.dimension}.
+     */
+    private String embeddingBody() {
+        return "{\"model\":\"${xh.model}\",\"input\":{\"contents\":[{\"text\":\"${xh.user_input}\"}]},\"parameters\":{\"dimension\":1024}}";
     }
 
     private ObjectNode builtin(String id, int apiTypeVersion, int revision, String name, String body) {
