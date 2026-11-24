@@ -717,9 +717,18 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
                         .findFirst()
                         .orElseThrow();
                 assertEquals("CHAT_IN_PROGRESS", conflict.getBody().get("code"));
-                assertEquals(1, countRunRows(sessionId));
-                assertEquals(1, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
-                        .filter(message -> message.getRole() == MessageRole.USER).count());
+                // task-931「失败发送留痕」（用户裁定 A：留痕）：被拒的这一次不在准入事务里插非终态
+                // run，而是在独立事务补一条终态 failed run（errorCode=CHAT_IN_PROGRESS）并挂上它自己
+                // 的 user Message。于是 chat_runs 是 2 行、user Message 也是 2 条——但**在飞**仍必须
+                // 恰好 1 行。单飞不变量靠下面两条 SQL 断言收紧，绝不靠"把行数放宽到 2"变绿。
+                assertEquals(1, countNonTerminalRunRows(sessionId),
+                        "exactly one run may stay in flight under cap=1: " + runStatusSummary(sessionId));
+                assertEquals(1, countFailedTraceRunRows(sessionId),
+                        "the refused send must leave exactly one CHAT_IN_PROGRESS trace run: "
+                                + runStatusSummary(sessionId));
+                assertEquals(2, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+                        .filter(message -> message.getRole() == MessageRole.USER).count(),
+                        "one live turn + one durable trace for the refused send");
             } finally {
                 HOLD_CHAT_STREAM.set(false);
                 cancelSignal.countDown();
@@ -785,6 +794,31 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         return jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?",
                 Integer.class, sessionId);
+    }
+
+    /** task-1000: runs that still occupy an admission slot (mirror of the gate's non-terminal set). */
+    private int countNonTerminalRunRows(String sessionId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ? "
+                        + "AND status IN ('accepted','queued','running','streaming',"
+                        + "'awaiting_approval','dispatching','cancelling')",
+                Integer.class, sessionId);
+    }
+
+    /** task-931 留痕：the terminal trace row a refused submission writes (not an admitted run). */
+    private int countFailedTraceRunRows(String sessionId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ? "
+                        + "AND status = 'failed' AND error_code = 'CHAT_IN_PROGRESS'",
+                Integer.class, sessionId);
+    }
+
+    /** Diagnostic only: {@code status/errorCode} of every run row on this session. */
+    private String runStatusSummary(String sessionId) {
+        return String.valueOf(jdbcTemplate.queryForList(
+                "SELECT status || '/' || coalesce(error_code, '-') FROM chat_runs "
+                        + "WHERE CAST(session_id AS VARCHAR) = ? ORDER BY created_at",
+                String.class, sessionId));
     }
 
     private List<ResponseEntity<Map>> postChatConcurrently(String sessionId, List<String> contents,
