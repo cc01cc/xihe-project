@@ -158,7 +158,19 @@ const navBridge = useSplitterPanelBridge({
     handleId: NAV_RESIZE_HANDLE_ID,
     isCollapsed: () => navPanelCollapsed.value,
 });
-const { resizing: navResizing } = navBridge;
+const { resizing: navResizing, layoutReady: navLayoutReady } = navBridge;
+/**
+ * task-1017：跨页返回时整块壳会重新挂载，panel 的 `flex-grow` 从 0 起算。此前无条件挂
+ * `transition-[flex-grow]` ⇒ 新挂载的 300ms 里主列从 ~5px 爬到最终宽度（实测首帧
+ * `main=5px`、~150ms 时 715px）。壳内的 WorkspaceWorkbench 与任何「返回后立刻量一次」的
+ * 消费者都在这段里读到塌缩值（task-1017 的 70/382px 读数即落在该窗口），看起来像布局
+ * 被压死、刷新才恢复。
+ *
+ * 修法：**首帧不参与动画** —— 只有 reka 报过一次尺寸（`layoutReady`，即 layout 已初始化）
+ * 之后才启用 flex-grow 过渡。跨页重挂载因此直接以最终宽度完成首绘；用户后续的拖拽 /
+ * 键盘折叠仍有过渡。禁止用 setTimeout/强制 reflow 绕过。
+ */
+const navShellAnimated = computed(() => navLayoutReady.value && !navResizing.value);
 
 function setNavPanel(el: unknown): void {
     navPanelEl.value = (el as SplitterPanelExposed | null) ?? null;
@@ -434,6 +446,7 @@ onUnmounted(() => {
                     :is-mobile="isMobile"
                     :force-collapsed="navYielded"
                     :resizing="navResizing"
+                    :layout-ready="navLayoutReady"
                 />
             </SplitterPanel>
             <!--
@@ -463,7 +476,9 @@ onUnmounted(() => {
             </SplitterResizeHandle>
             <SplitterPanel
                 class="flex min-h-0 min-w-0"
-                :class="navResizing ? 'transition-none' : 'transition-[flex-grow] duration-300'"
+                :class="
+                    navShellAnimated ? 'transition-[flex-grow] duration-300' : 'transition-none'
+                "
             >
                 <main
                     id="main-content"

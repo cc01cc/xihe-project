@@ -53,6 +53,15 @@ const props = defineProps<{
      * live width bubble. Never a width channel of its own.
      */
     resizing?: boolean;
+    /**
+     * task-1017：splitter 是否已报过首帧尺寸（reka layout 已初始化）。
+     *
+     * <p>壳跨页重挂载时 `aside` 是新的 DOM，`transition-[flex-grow]` 会从 0 起算，令导航
+     * 面板首帧塌成 0 再爬回目标宽度 —— 这段时间主列被挤成几像素，工作台只要在挂载期量
+     * 一次就会记录到塌缩几何。默认 `true`（独立使用/存量测试不受影响）；`AppLayout` 传
+     * reka 的就绪信号。</p>
+     */
+    layoutReady?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -273,7 +282,9 @@ function handleLogout() {
                 ? 'transition-none'
                 : isMobile
                   ? 'transition-[width] duration-300'
-                  : 'transition-[flex-grow] duration-300',
+                  : props.layoutReady === false
+                    ? 'transition-none'
+                    : 'transition-[flex-grow] duration-300',
         ]"
     >
         <!--
