@@ -1034,6 +1034,22 @@ const messages = {
                 "继承态跟随该主体的角色基线，不可逐个改；要逐项限定请切「显式指定权限」。",
             agentCapZeroHint:
                 "一个都不勾 = 显式零权限（CP 记 capSource=explicit），不是「用基线」。",
+            // task-959 / R38：工作区维度（MCP 访问 + 访问预设导入）。
+            agentMcpTitle: "MCP",
+            agentMcpLoading: "加载中…",
+            agentMcpEmpty: "本工作区还没有 MCP server",
+            agentMcpManage: "管理 MCP",
+            agentMcpFailed: "MCP 配置读取失败",
+            agentMcpGrantTitle: "本工作区 MCP 访问",
+            agentMcpGrantHint:
+                "勾选 = 给你自己持有的网关动作补上 mcp:serverId 形式的通道授权；工具调用还受动作勾选的对象资源约束（两边都命中才放行）。",
+            agentPresetImportTitle: "从访问预设导入",
+            agentPresetImportHint:
+                "预设只是模板：导入的是它当前的授权原子，之后可逐项删除或改资源，预设本身没有约束力。",
+            agentPresetImportEmpty: "当前没有可导入的访问预设",
+            agentPresetImportPlaceholder: "选择要导入的预设",
+            agentPresetImportApply: "导入为权限草稿",
+            agentPresetImportDone: "已导入 {count} 项权限，可继续微调",
             agentUnboundSuccess: "智能体已从工作区解绑",
             agentDefaultModelProvider: "默认模型 provider",
             agentDefaultModelName: "默认模型名",
@@ -5539,6 +5555,22 @@ const messages = {
                 "Inherited mode follows this principal's role baseline and is not editable per atom; switch to “Specify permissions explicitly” to narrow it.",
             agentCapZeroHint:
                 "Selecting none means an explicit zero cap (CP records capSource=explicit), not “use the baseline”.",
+            // task-959 / R38: the workspace dimension (MCP access + access-preset import).
+            agentMcpTitle: "MCP",
+            agentMcpLoading: "Loading…",
+            agentMcpEmpty: "This workspace has no MCP servers yet",
+            agentMcpManage: "Manage MCP",
+            agentMcpFailed: "Could not read the MCP configuration",
+            agentMcpGrantTitle: "Workspace MCP access",
+            agentMcpGrantHint:
+                "Checking a server adds mcp:serverId channel grants for the gateway actions you hold; a tool call also needs the object resource on the same action (both must match).",
+            agentPresetImportTitle: "Import from an access preset",
+            agentPresetImportHint:
+                "A preset is only a template: importing copies its current atoms, and every row stays editable afterwards — the preset itself imposes nothing.",
+            agentPresetImportEmpty: "No importable access presets right now",
+            agentPresetImportPlaceholder: "Pick a preset to import",
+            agentPresetImportApply: "Import as permission draft",
+            agentPresetImportDone: "Imported {count} permission(s); keep fine-tuning below",
             agentUnboundSuccess: "Agent unbound from the Workspace",
             agentDefaultModelProvider: "Default model provider",
             agentDefaultModelName: "Default model name",

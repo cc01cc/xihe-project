@@ -61,6 +61,8 @@ const apiMock = vi.hoisted(() => ({
     getSkills: vi.fn<() => Promise<unknown[]>>(),
     getWorkspaceSkills: vi.fn<(workspaceId: string) => Promise<unknown[]>>(),
     listWorkspaceAgentSpawnSessions: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+    // task-959 / R38：本工作区 MCP 可见集。
+    getMcpConfig: vi.fn<() => Promise<unknown>>(),
     // task-116：默认智能体写面（CP 端点尚未落地）。
     setWorkspaceAgentDefault: vi.fn<(workspaceId: string, principalId: string) => Promise<void>>(),
     clearWorkspaceAgentDefault:
@@ -161,6 +163,7 @@ beforeEach(() => {
     localStorage.removeItem("xihe-pending-agent-principals");
     for (const fn of Object.values(apiMock)) fn.mockReset();
     apiMock.getWorkspaceAgents.mockResolvedValue([]);
+    apiMock.getMcpConfig.mockResolvedValue({ mcpServers: {} });
     apiMock.getAgentTemplates.mockResolvedValue({
         layer: "instance",
         workspaceId: null,

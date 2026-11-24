@@ -2331,6 +2331,12 @@ public class AgentPrincipalService {
                                      // "who owns this row" instead of leaving it to the request path.
                                      String ownership,
                                      String defaultModelProvider, String defaultModelName,
+                                     // task-959 / R38 (user ruling 2026-11-24): Agent ↔ model is
+                                     // many-to-one — one principal binds exactly one provider+model
+                                     // intent, so the "allowed models whitelist" concept is retired.
+                                     // KEPT READ-ONLY for compatibility (existing rows may be non-null);
+                                     // the UI no longer renders or submits it. The column/field is
+                                     // scheduled for deletion by a follow-up card — do not add new writers.
                                      JsonNode allowedModels, Instant disabledAt, JsonNode hooks,
                                      JsonNode contextPolicy) {}
 

@@ -85,7 +85,12 @@ export interface AgentPrincipalDetail {
     disabled: boolean;
     defaultModelProvider: string | null;
     defaultModelName: string | null;
-    allowedModels: AgentModelRef[] | null;
+    /**
+     * @deprecated R38（2026-11-24 用户裁定）：Agent ↔ 模型是多对一，一个主体只绑一个
+     * provider+model 意图，「允许模型白名单」概念退役。字段保留为只读兼容（存量行可能非空），
+     * **抽屉不再渲染/校验/提交它**；CP 侧字段待删（task-959 只标注，不改 schema）。
+     */
+    allowedModels?: AgentModelRef[] | null;
     hooks: Record<string, unknown> | null;
     contextPolicy: Record<string, unknown> | null;
     delegationPolicy: Record<string, unknown> | null;
@@ -163,18 +168,11 @@ function resolveConnectionId(provider: string, model: string): string {
 
 // ---- 工作副本与基准（dirty 判定用） --------------------------------------------------------
 
-/** 白名单行草稿：连接 id 只用于在本页挑模型，不上 wire（契约：主体不持有连接）。 */
-interface AllowedModelDraft {
-    provider: string;
-    connectionId: string;
-    model: string;
-}
 interface ModelDraft {
     provider: string;
     /** 本地挑模型用的连接（task-138）；wire 仍然只写 provider + model。 */
     connectionId: string;
     model: string;
-    allowedModels: AllowedModelDraft[];
 }
 interface HookAdvisorDraft {
     kind: string;
@@ -185,7 +183,6 @@ const modelDraft = reactive<ModelDraft>({
     provider: "",
     connectionId: "",
     model: "",
-    allowedModels: [],
 });
 const modelBaseline = ref("");
 const delegationDraft = ref<DelegationPolicyValue>({ maxCount: null, maxDepth: null });
@@ -245,14 +242,7 @@ function parseAdvisors(doc: Record<string, unknown> | null): HookAdvisorDraft[] 
 
 function snapshotModel(draft: ModelDraft): string {
     // 连接只是挑选态，不进快照 —— 换个等价连接不算脏。
-    return JSON.stringify([
-        draft.provider.trim(),
-        draft.model.trim(),
-        draft.allowedModels.map((entry) => ({
-            provider: entry.provider.trim(),
-            model: entry.model.trim(),
-        })),
-    ]);
+    return JSON.stringify([draft.provider.trim(), draft.model.trim()]);
 }
 
 function resetDrafts() {
@@ -265,11 +255,6 @@ function resetDrafts() {
     modelDraft.provider = principal?.defaultModelProvider ?? "";
     modelDraft.model = principal?.defaultModelName ?? "";
     modelDraft.connectionId = resolveConnectionId(modelDraft.provider, modelDraft.model);
-    modelDraft.allowedModels = (principal?.allowedModels ?? []).map((entry) => ({
-        provider: entry.provider,
-        model: entry.model,
-        connectionId: resolveConnectionId(entry.provider, entry.model),
-    }));
     modelBaseline.value = snapshotModel(modelDraft);
     delegationDraft.value = parseDelegationPolicy(principal?.delegationPolicy ?? null);
     delegationBaseline.value = { ...delegationDraft.value };
@@ -349,14 +334,8 @@ const bothOrNeitherError = computed(() => {
     return providerBlank !== modelBlank;
 });
 
-const allowedModelsInvalid = computed(() =>
-    modelDraft.allowedModels.some(
-        (entry) => entry.provider.trim() === "" || entry.model.trim() === "",
-    ),
-);
-
 const modelDirty = computed(() => snapshotModel(modelDraft) !== modelBaseline.value);
-const modelValid = computed(() => !bothOrNeitherError.value && !allowedModelsInvalid.value);
+const modelValid = computed(() => !bothOrNeitherError.value);
 const modelSaveBlocked = computed(
     () => props.readonly || !modelDirty.value || !modelValid.value || modelSaving.value,
 );
@@ -430,28 +409,6 @@ const modelBinding = computed<AgentModelBindingDraft>({
         modelDraft.model = value.model;
     },
 });
-
-/** 白名单行 ↔ 组件草稿：连接只用于本页挑模型。 */
-function allowedBinding(entry: AllowedModelDraft): AgentModelBindingDraft {
-    return {
-        provider: entry.provider,
-        connectionId: entry.connectionId,
-        model: entry.model,
-        restrict: false,
-    };
-}
-
-function applyAllowedModel(index: number, value: AgentModelBindingDraft): void {
-    const entry = modelDraft.allowedModels[index];
-    if (!entry) return;
-    entry.provider = value.provider;
-    entry.connectionId = value.connectionId;
-    entry.model = value.model;
-}
-
-function addAllowedModel(): void {
-    modelDraft.allowedModels.push({ provider: "", connectionId: "", model: "" });
-}
 
 const delegationDirty = computed(() =>
     delegationPolicyDirty(delegationBaseline.value, delegationDraft.value),
@@ -607,21 +564,13 @@ async function saveModel() {
     if (!principalId || modelSaveBlocked.value) return;
     modelSaving.value = true;
     sectionErrors.model = null;
-    const baseline = JSON.parse(modelBaseline.value) as [string, string, AgentModelRef[]];
+    const baseline = JSON.parse(modelBaseline.value) as [string, string];
     try {
         const provider = modelDraft.provider.trim();
         const model = modelDraft.model.trim();
-        // 连接只要挑模型，落 wire 的仍是 {provider, model}（契约：主体不持有连接）。
-        const wireAllowedModels = modelDraft.allowedModels.map((entry) => ({
-            provider: entry.provider.trim(),
-            model: entry.model.trim(),
-        }));
         const body: AgentPrincipalUpdateBody = {
             ...(provider !== baseline[0] ? { defaultModelProvider: provider || null } : {}),
             ...(model !== baseline[1] ? { defaultModelName: model || null } : {}),
-            ...(JSON.stringify(wireAllowedModels) !== JSON.stringify(baseline[2])
-                ? { allowedModels: wireAllowedModels.length ? wireAllowedModels : null }
-                : {}),
         };
         const view = usesInstanceWriteDoor()
             ? await patchInstancePrincipalDocuments(principalId, body)
@@ -631,17 +580,11 @@ async function saveModel() {
         modelDraft.provider = view.defaultModelProvider ?? "";
         modelDraft.model = view.defaultModelName ?? "";
         modelDraft.connectionId = resolveConnectionId(modelDraft.provider, modelDraft.model);
-        modelDraft.allowedModels = (view.allowedModels ?? []).map((entry) => ({
-            provider: entry.provider,
-            model: entry.model,
-            connectionId: resolveConnectionId(entry.provider, entry.model),
-        }));
         modelBaseline.value = snapshotModel(modelDraft);
         emit("changed", {
             principalId,
             defaultModelProvider: view.defaultModelProvider,
             defaultModelName: view.defaultModelName,
-            allowedModels: view.allowedModels,
         });
         toast.success(t(K + "modelSaved"));
     } catch (cause) {
@@ -654,15 +597,10 @@ async function saveModel() {
 }
 
 function resetModel() {
-    const baseline = JSON.parse(modelBaseline.value) as [string, string, AgentModelRef[]];
+    const baseline = JSON.parse(modelBaseline.value) as [string, string];
     modelDraft.provider = baseline[0];
     modelDraft.model = baseline[1];
     modelDraft.connectionId = resolveConnectionId(modelDraft.provider, modelDraft.model);
-    modelDraft.allowedModels = baseline[2].map((entry) => ({
-        provider: entry.provider,
-        model: entry.model,
-        connectionId: resolveConnectionId(entry.provider, entry.model),
-    }));
     sectionErrors.model = null;
 }
 
@@ -948,51 +886,8 @@ function discardAndClose() {
                     <p v-if="bothOrNeitherError" class="text-xs text-destructive" role="alert">
                         {{ t(K + "modelBothOrNeither") }}
                     </p>
-                    <div class="space-y-2">
-                        <p class="text-sm font-medium">{{ t(K + "allowedModels") }}</p>
-                        <p class="text-xs text-muted-foreground">
-                            {{ t(K + "allowedModelsHint") }}
-                        </p>
-                        <div
-                            v-for="(entry, index) in modelDraft.allowedModels"
-                            :key="index"
-                            class="space-y-1"
-                        >
-                            <AgentModelBindingFields
-                                :model-value="allowedBinding(entry)"
-                                :field-prefix="'apd-allowed-' + index"
-                                :hint-prefix="'apd-allowed-hint-' + index"
-                                :disabled="!canEdit('model')"
-                                hide-restrict
-                                @update:model-value="
-                                    (value: AgentModelBindingDraft) =>
-                                        applyAllowedModel(index, value)
-                                "
-                            />
-                            <Button
-                                v-if="canEdit('model')"
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                :data-testid="'apd-allowed-remove-' + index"
-                                @click="modelDraft.allowedModels.splice(index, 1)"
-                            >
-                                <X class="size-3.5" aria-hidden="true" />
-                                {{ t(K + "allowedModelsRemove") }}
-                            </Button>
-                        </div>
-                        <Button
-                            v-if="canEdit('model')"
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            data-testid="apd-allowed-add"
-                            @click="addAllowedModel"
-                        >
-                            <Plus class="size-3.5" aria-hidden="true" />
-                            {{ t(K + "allowedModelsAdd") }}
-                        </Button>
-                    </div>
+                    <!-- R38：白名单已退役（Agent ↔ 模型多对一）。存量行的
+                         `allowedModels` 只做读取兼容，抽屉不再渲染、校验或提交它。 -->
                     <p
                         v-if="isUnknown('model')"
                         class="text-xs text-muted-foreground"

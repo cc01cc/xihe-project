@@ -669,28 +669,12 @@ describe("AgentPrincipalDetailDrawer", () => {
         ).toBe("gpt-3.5-legacy");
     });
 
-    it("白名单成对校验：新加的空行挡住保存、不发请求", async () => {
-        const update = vi.spyOn(api, "updateAgentPrincipal");
-        mountDrawer();
-        await flushPromises();
-
-        await click("apd-allowed-add");
-        const save = q<HTMLButtonElement>('[data-testid="apd-save-all"]');
-        expect(save.disabled).toBe(true);
-        save.click();
-        await flushPromises();
-        expect(update).not.toHaveBeenCalled();
-    });
-
-    it("白名单落库：连接只用于挑模型，wire 仍是成对 {provider, model}", async () => {
+    it("R38：白名单已退役 —— 存量 allowedModels 不渲染、保存也不提交", async () => {
         const update = vi.spyOn(api, "updateAgentPrincipal").mockResolvedValue({
             principalId: "p-1",
-            defaultModelProvider: "openai",
-            defaultModelName: "gpt-4o-mini",
-            allowedModels: [
-                { provider: "openai", model: "gpt-4o-mini" },
-                { provider: "anthropic", model: "claude-x" },
-            ],
+            defaultModelProvider: "anthropic",
+            defaultModelName: "claude-x",
+            allowedModels: [{ provider: "openai", model: "gpt-4o-mini" }],
             hooks: null,
             contextPolicy: null,
             delegationPolicy: null,
@@ -698,20 +682,16 @@ describe("AgentPrincipalDetailDrawer", () => {
         const wrapper = mountDrawer();
         await flushPromises();
 
-        await click("apd-allowed-add");
-        await pick(wrapper, "apd-allowed-1-provider", "anthropic");
-        await pick(wrapper, "apd-allowed-1-connection", "conn-anthropic");
-        await pick(wrapper, "apd-allowed-1-model-name", "claude-x");
+        // 存量行仍可读：不因字段存在就报错/清空；界面不再提供白名单编辑入口。
+        expect(maybe('[data-testid="apd-allowed-add"]')).toBeNull();
+        expect(wrapper.html()).not.toContain("apd-allowed-");
+
+        await pickAnthropic(wrapper);
         await click("apd-save-all");
 
         const body = update.mock.calls[0]![1] as Record<string, unknown>;
-        expect(Object.keys(body)).toEqual(["allowedModels"]);
-        expect(body.allowedModels).toEqual([
-            { provider: "openai", model: "gpt-4o-mini" },
-            { provider: "anthropic", model: "claude-x" },
-        ]);
-        // 连接 id 不上 wire（契约：主体不持有 provider connection）。
-        expect(JSON.stringify(body.allowedModels)).not.toContain("conn-");
+        expect(Object.keys(body).sort()).toEqual(["defaultModelName", "defaultModelProvider"]);
+        expect("allowedModels" in body).toBe(false);
     });
 });
 

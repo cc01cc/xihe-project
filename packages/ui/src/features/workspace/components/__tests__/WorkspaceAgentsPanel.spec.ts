@@ -46,6 +46,8 @@ const apiMock = vi.hoisted(() => ({
     getWorkspaceSkills: vi.fn<(workspaceId: string) => Promise<unknown[]>>(),
     // task-134（D-1785）：workspace 级「委派的子会话」权威读面（只读、按主体展开时拉取）。
     listWorkspaceAgentSpawnSessions: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+    // task-959 / R38：本工作区 MCP 可见集（成员可读；默认空）。
+    getMcpConfig: vi.fn<() => Promise<unknown>>(),
 }));
 
 const CREATE_ACCOUNT_MISSING = {
@@ -146,6 +148,9 @@ beforeEach(() => {
     apiMock.deleteAgentMemory.mockReset();
     apiMock.listWorkspaceAgentSpawnSessions.mockReset();
     apiMock.getWorkspaceAgents.mockResolvedValue([]);
+    apiMock.listPresets.mockResolvedValue([]);
+    apiMock.getMcpConfig.mockReset();
+    apiMock.getMcpConfig.mockResolvedValue({ mcpServers: {} });
     apiMock.getAgentTemplates.mockResolvedValue({
         layer: "instance",
         workspaceId: null,

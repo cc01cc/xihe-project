@@ -195,6 +195,126 @@ const rbacActionError = ref("");
 let rbacGeneration = 0;
 
 /**
+ * task-959 / R38：**本工作区的 MCP 可见集**。
+ *
+ * <p>MCP server 是工作区级资源（`GET /workspaces/{id}/mcp-config`）—— 同一主体在不同工作区
+ * 看到的 server 集不同，所以配置入口只在工作区面出现，不塞进跨层的详情抽屉
+ * （task-153 C1=B 已裁定「工作区绑定面不进抽屉」）。读面只要求成员身份，写授权仍在
+ * 权限原子层（`read × mcp:&lt;serverId&gt;` 是 D-1921 的网关门）；本区不复制判定。</p>
+ */
+const mcpServers = ref<string[]>([]);
+const mcpState = ref<"idle" | "loading" | "ready" | "failed">("idle");
+const mcpError = ref("");
+let mcpGeneration = 0;
+
+/** 访问预设（只读模板）：导入的是它**当前的原子集合**，导入后逐项独立可改（R39/D-1936）。 */
+const selectedPresetId = ref("");
+const presetImportMessage = ref("");
+
+function gatewayActionsHeldByActor(): string[] {
+    const held = new Set([...workspaceAtoms.value, ...instanceAtoms.value]);
+    return ["read", "write", "delete", "exec", "network", "PLUGIN_INVOKE"].filter((action) =>
+        held.has(action),
+    );
+}
+
+function mcpResource(serverId: string): string {
+    return `mcp:${serverId}`;
+}
+
+function hasMcpGrant(serverId: string): boolean {
+    const resource = mcpResource(serverId);
+    return permissions.value.some((permission) => permission.resource === resource);
+}
+
+/**
+ * 「允许该主体经此 MCP server」= 给操作者自己持有的网关动作各补一条 `mcp:<serverId>` 通道
+ * 授权。对象资源仍由下面那组动作勾选单独约束（D-1921 的 AND 门：`action × object` 与
+ * `action × mcp:<id>` 必须同时命中）。操作者没持有的动作不会替它授出去。
+ */
+function toggleMcpGrant(serverId: string, checked: boolean): void {
+    const resource = mcpResource(serverId);
+    const withoutServer = permissions.value.filter(
+        (permission) => permission.resource !== resource,
+    );
+    if (!checked) {
+        permissions.value = withoutServer;
+        return;
+    }
+    const actions = gatewayActionsHeldByActor();
+    permissions.value = [
+        ...withoutServer,
+        ...actions.map((actionClass) => ({ actionClass, resource })),
+    ];
+}
+
+/** 预设原子 → 权限草稿行：只收可授予工作区、非 capability、非 `$request` 的动作原子。 */
+function presetDraftRows(preset: ApiPreset): Array<{ actionClass: string; resource: string }> {
+    return preset.atoms.flatMap((atom) => {
+        if (atom.capability || atom.agentPrincipalForbidden || atom.scopeClass === "instance") {
+            return [];
+        }
+        if (atom.resource === "$request") return [];
+        const actionClass = bareAtom(atom.name);
+        return actionClass === null ? [] : [{ actionClass, resource: atom.resource }];
+    });
+}
+
+/**
+ * 导入预设 = 把模板**当时的原子**展开成具体授权行，写进可继续编辑的草稿。
+ *
+ * <p>用户裁定（R39）：「预设只是一个模板，它并没有任何的约束力」—— 所以这里不绑定角色、
+ * 不锁住选项；导入后每一行都能单独删除或改资源。真正落库仍是现有的「保存权限」写门。</p>
+ */
+function importPresetAtoms(): void {
+    const preset = roleCandidates.value.find(
+        (candidate) => candidate.id === selectedPresetId.value,
+    );
+    presetImportMessage.value = "";
+    if (!preset) return;
+    const keyOf = (permission: { actionClass: string; resource?: string }) =>
+        `${bareAtom(permission.actionClass) ?? permission.actionClass}|${permission.resource ?? "*"}`;
+    const seen = new Set(permissions.value.map(keyOf));
+    const added = presetDraftRows(preset).filter((row) => {
+        const key = keyOf(row);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+    permissions.value = [...permissions.value, ...added];
+    capMode.value = "explicit";
+    presetImportMessage.value = t("workspace.agentPresetImportDone", { count: added.length });
+}
+
+async function loadMcpServers() {
+    const generation = ++mcpGeneration;
+    mcpState.value = "loading";
+    mcpError.value = "";
+    try {
+        const doc = await api.getMcpConfig(props.workspaceId);
+        if (generation !== mcpGeneration) return;
+        let servers = doc.mcpServers;
+        if (typeof servers === "string") {
+            const parsed: unknown = servers.trim() === "" ? {} : JSON.parse(servers);
+            servers = isPlainObject(parsed) ? (parsed as Record<string, unknown>) : {};
+        }
+        mcpServers.value =
+            servers && typeof servers === "object" && !Array.isArray(servers)
+                ? Object.keys(servers).filter((name) => name.trim() !== "")
+                : [];
+        mcpState.value = "ready";
+    } catch (cause) {
+        if (generation !== mcpGeneration) return;
+        mcpState.value = "failed";
+        mcpError.value = presentCauseError(t, cause, t("workspace.agentMcpFailed")).copy;
+    }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
  * task-134（D-1785）：**委派的子会话**（面板第四小节，只读）。
  *
  * <p>数字只能来自 CP 的 workspace 级权威读面。拿 `GET /sessions` 再在前端筛是**静默偏低**：
@@ -339,6 +459,8 @@ onMounted(() => {
     resetMemoryPanel();
     void refreshAgentsAndCandidates();
     void loadCapabilityProjection();
+    // task-959：MCP 可见集是工作区级读面（成员即可读），与 agent 列表并行加载。
+    void loadMcpServers();
 });
 
 async function loadCapabilityProjection() {
@@ -894,19 +1016,27 @@ function permissionResource(actionClass: string): string {
 }
 
 function togglePermission(actionClass: string, checked: boolean) {
-    const current = permissions.value.filter(
-        (permission) => permission.actionClass !== actionClass,
-    );
-    if (checked) current.push({ actionClass, resource: "*" });
-    permissions.value = current;
+    if (!checked) {
+        permissions.value = permissions.value.filter(
+            (permission) => permission.actionClass !== actionClass,
+        );
+        return;
+    }
+    if (!hasPermission(actionClass)) {
+        permissions.value = [...permissions.value, { actionClass, resource: "*" }];
+    }
 }
 
 function setPermissionResource(actionClass: string, resource: string) {
-    permissions.value = permissions.value.map((permission) =>
-        permission.actionClass === actionClass
-            ? { ...permission, resource: resource.trim() || "*" }
-            : permission,
+    const index = permissions.value.findIndex(
+        (permission) => permission.actionClass === actionClass,
     );
+    const next = resource.trim() || "*";
+    if (index >= 0) {
+        permissions.value[index] = { ...permissions.value[index]!, resource: next };
+        return;
+    }
+    permissions.value = [...permissions.value, { actionClass, resource: next }];
 }
 
 /**
@@ -1048,8 +1178,26 @@ function startEditing(agent: WorkspaceAgentBinding) {
     // 47A：回显以 CP 记的 `capSource` 为准（`baseline` ⇒ 继承态）；更早的响应没有该字段时按显式处理。
     capMode.value = agent.capSource === "baseline" ? "inherit" : "explicit";
     error.value = "";
+    selectedPresetId.value = "";
+    presetImportMessage.value = "";
     // task-469（417 P1-6）：打开编辑区时读**一次** live 生效权限（不是每行一次请求）。
     void loadEffectiveCap(agent.principalId);
+    // task-959：访问预设候选按需补齐（与 RBAC 区共用 `/presets` 读面，失败不阻塞编辑）。
+    void loadPresetCandidates();
+}
+
+/** 两个入口（RBAC 展开 / 权限编辑）都要预设候选；只读模板，失败时留空并单独呈现。 */
+async function loadPresetCandidates(): Promise<void> {
+    if (roleCandidates.value.length > 0) return;
+    try {
+        const presets = await api.listPresets(props.workspaceId);
+        // 与 RBAC 区同一过滤口径：agent 主体不可授予的原子整行剔除。
+        roleCandidates.value = presets.filter(
+            (preset) => !preset.atoms.some((atom) => atom.agentPrincipalForbidden),
+        );
+    } catch (cause) {
+        logger.warn("Load workspace presets for agent config failed", cause);
+    }
 }
 
 /**
@@ -1622,6 +1770,53 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                         >
                             {{ t("workspace.noAgentCapabilities") }}
                         </span>
+                        <!--
+                            task-959 / R38：MCP 是工作区级资源而不是主体的跨层属性，所以它出现在
+                            「本工作区」这一行；读面 = `GET /workspaces/{id}/mcp-config`（成员可读）。
+                            实体授权仍走权限原子的 `read × mcp:<serverId>`（D-1921 网关门）。
+                        -->
+                        <div
+                            class="flex w-full flex-wrap items-center gap-1.5 text-xs"
+                            data-testid="workspace-agent-mcp"
+                        >
+                            <span class="font-medium text-muted-foreground">
+                                {{ t("workspace.agentMcpTitle") }}
+                            </span>
+                            <span v-if="mcpState === 'loading'" class="text-muted-foreground">
+                                {{ t("workspace.agentMcpLoading") }}
+                            </span>
+                            <span v-else-if="mcpState === 'failed'" class="text-destructive">
+                                {{ mcpError }}
+                            </span>
+                            <span
+                                v-else-if="mcpServers.length === 0"
+                                class="text-muted-foreground"
+                                data-testid="workspace-agent-mcp-empty"
+                            >
+                                {{ t("workspace.agentMcpEmpty") }}
+                            </span>
+                            <template v-else>
+                                <span
+                                    v-for="server in mcpServers"
+                                    :key="server"
+                                    class="rounded border px-1.5 py-0.5 text-muted-foreground"
+                                    :data-testid="`workspace-agent-mcp-server-${server}`"
+                                >
+                                    {{ server }}
+                                </span>
+                            </template>
+                            <router-link
+                                :to="{
+                                    name: 'workspace-settings',
+                                    params: { workspaceId: props.workspaceId },
+                                    query: { tab: 'mcp' },
+                                }"
+                                class="ml-auto text-xs underline"
+                                data-testid="workspace-agent-mcp-manage"
+                            >
+                                {{ t("workspace.agentMcpManage") }}
+                            </router-link>
+                        </div>
                         <button
                             type="button"
                             class="ml-auto text-xs underline disabled:opacity-50"
@@ -1833,6 +2028,114 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                         >
                             {{ capExceedsActorError }}
                         </p>
+
+                        <!-- task-959 / R38：访问预设入口 —— 导的是**当时原子**，不是约束。
+                             导入后仍是草稿，可逐项删除/改资源，最后统一走「保存权限」。 -->
+                        <div class="space-y-2 border-t pt-3" data-testid="agent-preset-import">
+                            <p class="text-xs font-medium">
+                                {{ t("workspace.agentPresetImportTitle") }}
+                            </p>
+                            <p class="text-xs text-muted-foreground">
+                                {{ t("workspace.agentPresetImportHint") }}
+                            </p>
+                            <p
+                                v-if="roleCandidates.length === 0"
+                                class="text-xs text-muted-foreground"
+                                data-testid="agent-preset-import-empty"
+                            >
+                                {{ t("workspace.agentPresetImportEmpty") }}
+                            </p>
+                            <div v-else class="flex flex-wrap items-center gap-2">
+                                <Select v-model="selectedPresetId">
+                                    <SelectTrigger
+                                        class="h-8 w-56"
+                                        data-testid="agent-preset-import-select"
+                                        :aria-label="t('workspace.agentPresetImportTitle')"
+                                    >
+                                        <SelectValue
+                                            :placeholder="
+                                                t('workspace.agentPresetImportPlaceholder')
+                                            "
+                                        />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem
+                                            v-for="preset in roleCandidates"
+                                            :key="preset.id"
+                                            :value="preset.id"
+                                        >
+                                            {{ preset.displayName || preset.name }}
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <button
+                                    type="button"
+                                    class="rounded-md border px-2 py-1 text-xs disabled:opacity-50"
+                                    data-testid="agent-preset-import-apply"
+                                    :disabled="selectedPresetId === ''"
+                                    @click="importPresetAtoms"
+                                >
+                                    {{ t("workspace.agentPresetImportApply") }}
+                                </button>
+                            </div>
+                            <p
+                                v-if="presetImportMessage"
+                                class="text-xs text-muted-foreground"
+                                data-testid="agent-preset-import-message"
+                            >
+                                {{ presetImportMessage }}
+                            </p>
+                        </div>
+
+                        <!-- task-959 / R38：按工作区维度授 MCP 网关通道。
+                             勾选 = 为操作者自己持有的网关动作补 `mcp:<serverId>`；对象资源另由上方
+                             动作勾选约束（D-1921 的 AND 门）。 -->
+                        <div class="space-y-2 border-t pt-3" data-testid="agent-mcp-config">
+                            <p class="text-xs font-medium">
+                                {{ t("workspace.agentMcpGrantTitle") }}
+                            </p>
+                            <p class="text-xs text-muted-foreground">
+                                {{ t("workspace.agentMcpGrantHint") }}
+                            </p>
+                            <p v-if="mcpState === 'loading'" class="text-xs text-muted-foreground">
+                                {{ t("workspace.agentMcpLoading") }}
+                            </p>
+                            <p
+                                v-else-if="mcpState === 'failed'"
+                                class="text-xs text-destructive"
+                                data-testid="agent-mcp-config-failed"
+                            >
+                                {{ mcpError }}
+                            </p>
+                            <p
+                                v-else-if="mcpServers.length === 0"
+                                class="text-xs text-muted-foreground"
+                                data-testid="agent-mcp-config-empty"
+                            >
+                                {{ t("workspace.agentMcpEmpty") }}
+                            </p>
+                            <ul v-else class="space-y-1.5" data-testid="agent-mcp-config-list">
+                                <li
+                                    v-for="server in mcpServers"
+                                    :key="server"
+                                    class="flex items-center gap-2 text-sm"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        :checked="hasMcpGrant(server)"
+                                        :disabled="capabilityState !== 'ready'"
+                                        :data-testid="`agent-mcp-grant-${server}`"
+                                        @change="
+                                            toggleMcpGrant(
+                                                server,
+                                                ($event.target as HTMLInputElement).checked,
+                                            )
+                                        "
+                                    />
+                                    <span class="font-mono text-xs">{{ server }}</span>
+                                </li>
+                            </ul>
+                        </div>
                     </template>
                     <div class="flex justify-end gap-2">
                         <button
