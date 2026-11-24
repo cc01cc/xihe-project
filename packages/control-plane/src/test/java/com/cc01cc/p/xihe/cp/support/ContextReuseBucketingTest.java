@@ -262,8 +262,14 @@ class ContextReuseBucketingTest {
         // task-970（实读）：task-932 的 DefaultAgentMaterializationIntegrationTest 与 task-946 的
         // AgentPrincipalReadSourceScopeTest 均以 per-class 基类运行且此前未登记 ⇒ 白名单 105→107、
         // per-class 107、合计 198→200；reusable 保持 93（下面一条先通过即是本轮实读）。
-        assertEquals(107, whitelist.size(), "per-class 白名单 = 107（task-756 的 105 + task-932/task-946 两类）");
-        assertEquals(107, perClass, "per-class 类数必须等于白名单条目数（实读 107）");
+        // task-1007（990 全量实读）：task-931/953/956 新增的 4 个 per-class 类从未登记
+        // （chat.FailedMessageTraceTest / provider.ProviderConnectionLabelUniquenessTest /
+        // service.OrgUnitMemberCandidateHttpTest / service.OrgUnitMemberCandidateReadTest），
+        // 4 类均无自有 context-key 注解、只是继承 AbstractIntegrationTest 的上下文 ⇒ 补登后
+        // 白名单 107→111、per-class 107→111、reusable 93→95、合计 200→206。
+        // 判据（problems 空集 + 互斥穷尽 + 判定码严格相等）一字未改，只更新实测常量。
+        assertEquals(111, whitelist.size(), "per-class 白名单 = 111（task-1007 的 107 + 4 类补登）");
+        assertEquals(111, perClass, "per-class 类数必须等于白名单条目数（实读 111）");
         // 2026-11-13（task-157）：9b356e6a9（PLAN-0774）新增 WorkspaceAgentCapSourceIntegrationTest（@SpringBootTest）
         // ⇒ 进 reusable 桶 +1：78→79，合计 155→156。只更新由实现推导出的常量，上面的判据
         // （problems 空集 + 白名单/复用桶互斥穷尽）一字未改；也未改成「从集合长度推导」——那样等于同义反复。
@@ -279,8 +285,8 @@ class ContextReuseBucketingTest {
         // D-1922 守卫波（8149b5fc2）：新增 policy/guard/L3RoutePrincipalMatrixTest 与
         // L4DenyExplainabilityGuardTest，两者都 extends AbstractReusableIntegrationTest 且无
         // context-key 注解 ⇒ reusable 91→93、合计 196→198。判据一字未改，只更新守卫实读常量。
-        assertEquals(93, reusable, "reusable 桶 = 93（实测读数：91 基线 + L3/L4 守卫两类的实读补差）");
-        assertEquals(200, classes.size(), "200 = 107 per-class + 93 reusable（task-970 实读）；含 task-202 的新抽象基类");
+        assertEquals(95, reusable, "reusable 桶 = 95（实读：206 类 - 111 per-class；task-1007）");
+        assertEquals(206, classes.size(), "206 = 111 per-class + 95 reusable（task-1007 实读）；含 task-202 的新抽象基类");
         Map<String, Integer> counts = new TreeMap<>();
         for (WhitelistEntry entry : whitelist.values()) {
             for (String code : entry.codes()) {
