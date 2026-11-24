@@ -19,6 +19,7 @@ import { principalNameError, usernameError } from "./principalName";
 export type FormFieldRuleId =
     | "provider.connectionKey"
     | "provider.label"
+    | "provider.modelDiscoveryUrl"
     | "principal.name"
     | "username";
 
@@ -123,6 +124,27 @@ export const FORM_FIELD_RULES: Record<FormFieldRuleId, FieldRuleSpec> = {
         server: {
             invalid: "PROVIDER_CONNECTION_INVALID",
             duplicate: "PROVIDER_CONNECTION_LABEL_CONFLICT",
+        },
+    },
+    /**
+     * task-953（R17）：连接级模型列表地址（可选）。只接受 http(s)；空值合法
+     * （调用方回落到 `{baseUrl}/models`）。CP 尚未提供该列，提交面由 ProviderHub 显式拦截。
+     */
+    "provider.modelDiscoveryUrl": {
+        id: "provider.modelDiscoveryUrl",
+        required: false,
+        trim: true,
+        custom: (value) => {
+            if (!value) return null;
+            try {
+                const url = new URL(value);
+                return url.protocol === "http:" || url.protocol === "https:" ? null : "invalid";
+            } catch {
+                return "invalid";
+            }
+        },
+        messages: {
+            invalid: "settings.providerHub.modelDiscoveryUrlInvalid",
         },
     },
     "principal.name": {

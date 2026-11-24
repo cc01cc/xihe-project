@@ -113,6 +113,12 @@ export interface ProviderConnection {
     workspaceId?: string | null;
     baseUrl?: string | null;
     modelDiscovery: ProviderDefinition["modelDiscovery"];
+    /**
+     * task-953（R17）UI 契约提案：连接级模型列表地址。CP 侧当前**没有**该列
+     * （`ProviderConnection.java:34-61` 只有 base_url 等字段）⇒ 读面恒缺省；
+     * 写入被 UI 拦下并明确报「当前后端未支持」，不做静默丢弃。
+     */
+    modelDiscoveryUrl?: string | null;
     manualModels: string[];
     hasKey: boolean;
     credentialId?: string | null;
@@ -151,6 +157,8 @@ export interface ProviderConnectionInput {
     credentialId?: string;
     baseUrl?: string;
     modelDiscovery?: ProviderDefinition["modelDiscovery"];
+    /** task-953（R17）：契约提案字段；CP 未实现前 UI 不会真正提交。 */
+    modelDiscoveryUrl?: string;
     manualModels?: string[];
     enabled?: boolean;
     apiTypeId?: string;

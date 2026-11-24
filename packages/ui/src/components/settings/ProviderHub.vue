@@ -8,12 +8,12 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { logger } from "../../lib/logger";
+import { validateField } from "../../lib/formValidation";
 import { formatApiType } from "../../lib/apiTypeLabels";
 import { ApiError, api, request } from "../../composables/api";
 import type { ProviderCatalog, CatalogModel, ModelPricing } from "../../types/provider";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
-import CredentialCreateDialog from "./credentials/CredentialCreateDialog.vue";
 import { resourceDetailPath } from "../../lib/resourceDetail";
 import type { ResourceLayer } from "../../lib/settingsIa";
 import type { CredentialOwnerType, CredentialSummary } from "../../types";
@@ -24,6 +24,7 @@ import {
     chatModelNamesOf,
     createProviderConnection,
     deleteProviderConnection,
+    inspectModelDiscoveryUrl,
     listProviderCatalog,
     updateProviderConnection,
     verifyProviderConnection,
@@ -658,6 +659,8 @@ const form = reactive({
     baseUrl: "",
     connectionKey: "default",
     modelDiscovery: "remote-models" as ProviderDefinition["modelDiscovery"],
+    /** task-953（R17）：连接级模型列表地址；留空回落 `{baseUrl}/models`。 */
+    modelDiscoveryUrl: "",
     manualModels: "",
     apiType: "",
 });
@@ -760,14 +763,16 @@ function formatVerifiedAt(value?: string | null): string {
 
 /* task-146（DSD-1512）：连接的密钥在 CP 侧是**凭据引用**，不是连接行上的字符串 ——
    ProviderConnectionService.resolveCredentialLink 对 apiKey 会新建一条 USER 层 lease 凭据，
-   对 credentialId 只做可用性校验，且两者互斥（同时给 = 400）。因此表单把密钥来源拆成三态：
-   keep 保留当前绑定（PATCH 不带任何密钥键）/ bind 绑定已有凭据（只发 credentialId）/
-   inline 内联新建（只发 apiKey，服务端再建一条凭据并绑定）。互斥由 UI 保证，后端 400 原文照显示。 */
-const credentialChoice = ref<"keep" | "bind" | "inline">("bind");
+   对 credentialId 只做可用性校验，且两者互斥（同时给 = 400）。因此表单把密钥来源拆成：
+   编辑态 keep 保留当前绑定（PATCH 不带任何密钥键）；新建态只有 bind 绑定已有凭据 /
+   inline 内联新建（只发 apiKey，服务端再建一条凭据并绑定）两态。
+   task-953（R10）：两态顺序与默认值按用户定稿 —— 新建密钥在前且默认选中，绑定已有凭据在后。
+   互斥由 UI 保证，后端 400 原文照显示。 */
+const credentialChoice = ref<"keep" | "bind" | "inline">("inline");
 const credentialOptions = ref<CredentialSummary[]>([]);
 const credentialsLoading = ref(false);
 const credentialsError = ref("");
-const createCredentialOpen = ref(false);
+const verifyingForm = ref(false);
 
 const credentialOwnerType = computed<CredentialOwnerType>(() => {
     if (formScope.value === "WORKSPACE") return "WORKSPACE";
@@ -804,6 +809,13 @@ const credentialLink = computed(() => {
               : "USER";
     return resourceDetailPath("credentials", layer, linkedId);
 });
+
+const modelDiscoveryUrlState = computed(() =>
+    inspectModelDiscoveryUrl(form.baseUrl, form.modelDiscoveryUrl),
+);
+const modelDiscoveryFallbackUrl = computed(
+    () => inspectModelDiscoveryUrl(form.baseUrl, "").effective,
+);
 
 function shortFingerprint(value: string): string {
     const trimmed = value.trim();
@@ -846,8 +858,8 @@ async function loadCredentialOptions() {
 }
 
 function beginReplaceCredential() {
-    credentialChoice.value = "bind";
-    form.credentialId = "";
+    credentialChoice.value = "inline";
+    form.apiKey = "";
 }
 
 function chooseBindMode() {
@@ -858,14 +870,6 @@ function chooseBindMode() {
 function chooseInlineMode() {
     credentialChoice.value = "inline";
     form.credentialId = "";
-}
-
-/** 快捷新建凭据成功后直接选中它 —— 用户刚建的凭据就是想去绑的那条。 */
-function onCredentialCreated(credential: CredentialSummary) {
-    createCredentialOpen.value = false;
-    credentialChoice.value = "bind";
-    form.credentialId = credential.id;
-    void loadCredentialOptions();
 }
 
 function resetForm(provider: ProviderDefinition, connection?: ProviderConnection) {
@@ -880,8 +884,8 @@ function resetForm(provider: ProviderDefinition, connection?: ProviderConnection
         t("settings.providerHub.connectionNameFallback", { name: provider.displayName });
     form.apiKey = "";
     form.credentialId = "";
-    // 编辑态默认「保留当前绑定」：用户不做动作就不动凭据；新建态默认「绑定已有凭据」。
-    credentialChoice.value = connection ? "keep" : "bind";
+    // 编辑态默认「保留当前绑定」：用户不做动作就不动凭据；新建态默认「内联新建密钥」（R10）。
+    credentialChoice.value = connection ? "keep" : "inline";
     credentialsError.value = "";
     void loadCredentialOptions();
     form.apiType =
@@ -903,6 +907,7 @@ function resetForm(provider: ProviderDefinition, connection?: ProviderConnection
     form.connectionKey = connection?.connectionKey ?? "default";
     form.modelDiscovery =
         connection?.modelDiscovery ?? pair?.modelDiscovery ?? provider.modelDiscovery;
+    form.modelDiscoveryUrl = connection?.modelDiscoveryUrl ?? "";
     form.manualModels = connection?.manualModels.join("\n") ?? "";
 }
 
@@ -915,6 +920,7 @@ async function previewTypeChange() {
     if (!pair) return;
     form.baseUrl = pair.defaultBaseUrl ?? selectedProvider.value?.defaultBaseUrl ?? "";
     form.modelDiscovery = pair.modelDiscovery ?? selectedProvider.value?.modelDiscovery ?? "manual";
+    form.modelDiscoveryUrl = "";
     try {
         if (connection) {
             const impact = await getConnectionTypeImpact(
@@ -1002,26 +1008,27 @@ async function load() {
     }
 }
 
-async function save() {
+/** task-953（R19）：验证与保存共用同一套表单校验；两者失败信息分别回显。 */
+function validateForm(): boolean {
     const provider = selectedProvider.value;
-    if (!provider) return;
+    if (!provider) return false;
     const pair = formType.value;
-    if (!pair) return;
+    if (!pair) return false;
     const existing = editingConnection.value;
     const label = form.label.trim();
     if (!label) {
         toast.error(t("settings.providerHub.toastLabelRequired"));
-        return;
+        return false;
     }
     if ([...label].length > 40) {
         toast.error(t("settings.providerHub.toastLabelTooLong"));
-        return;
+        return false;
     }
     // PLAN-0563: C0/C1 controls plus Unicode line/paragraph separators.
     // oxlint-disable-next-line no-control-regex -- 有意匹配控制字符（PLAN-0563 校验）
     if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(label)) {
         toast.error(t("settings.providerHub.toastLabelControl"));
-        return;
+        return false;
     }
     const duplicateLabel = connections.value.some(
         (item) =>
@@ -1043,7 +1050,7 @@ async function save() {
             (formOperation.value === "chat" && !defaultTemplate))
     ) {
         toast.error(t("settings.providerHub.toastTypePreviewRequired"));
-        return;
+        return false;
     }
     // task-146（DSD-1512）：密钥来源互斥 —— credentialId 与 apiKey 永远只发一个。
     const inlineKey = form.apiKey.trim();
@@ -1058,12 +1065,28 @@ async function save() {
         !inlineKey
     ) {
         toast.error(t("settings.providerHub.toastApiKeyRequired"));
-        return;
+        return false;
     }
     const connectionKey = form.connectionKey.trim();
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(connectionKey) || connectionKey.length > 64) {
         toast.error(t("settings.providerHub.toastKeyInvalid"));
-        return;
+        return false;
+    }
+    // task-953（R17）：连接级模型列表地址只做 UI 契约位；CP 尚未提供该列 ⇒ 填写时
+    // 明确报「当前后端未支持」，绝不静默丢弃（空值仍回落 `{baseUrl}/models`）。
+    if (form.modelDiscovery === "remote-models" && form.modelDiscoveryUrl.trim()) {
+        const issue = validateField(
+            "provider.modelDiscoveryUrl",
+            form.modelDiscoveryUrl,
+        ).primaryIssue;
+        if (issue) {
+            toast.error(t(issue.messageKey));
+            return false;
+        }
+        if (modelDiscoveryUrlState.value.kind === "cross-origin")
+            toast.warning(t("settings.providerHub.modelDiscoveryUrlCrossOrigin"));
+        toast.error(t("settings.providerHub.modelDiscoveryUrlUnsupported"));
+        return false;
     }
     // PLAN-0555: warn early but let the server's unique index decide; the 409
     // below is the authoritative answer (another writer may race).
@@ -1071,8 +1094,27 @@ async function save() {
     // PLAN-0622：限额必须是正整数（留空 = 不限额）；非法就不发请求。
     if (limitsRef.value?.hasError) {
         toast.error(t("settings.providerHub.limitsPositiveInteger"));
-        return;
+        return false;
     }
+    return true;
+}
+
+/** task-953（R19）：保存只走 POST/PATCH，不再自动验证；成功后关闭表单。 */
+async function save() {
+    if (!validateForm()) return;
+    const provider = selectedProvider.value!;
+    const pair = formType.value!;
+    const existing = editingConnection.value;
+    const label = form.label.trim();
+    const connectionKey = form.connectionKey.trim();
+    const inlineKey = form.apiKey.trim();
+    const linkedCredentialId = form.credentialId.trim();
+    const changedType =
+        existing &&
+        (existing.apiTypeId !== pair.apiTypeId || existing.apiTypeVersion !== pair.version);
+    const defaultTemplate = formTemplates.value.find(
+        (item) => templateKey(item) === targetDefaultKey.value,
+    );
 
     saving.value = true;
     try {
@@ -1108,23 +1150,14 @@ async function save() {
             // PLAN-0622：限额只在编辑已有连接时随 PATCH 提交（新建时由 CP 取默认）。
             ...(existing && resourceLimits.value ? resourceLimits.value : {}),
         };
-        const connection = editingConnection.value
-            ? await updateProviderConnection(editingConnection.value.id, input)
+        const connection = existing
+            ? await updateProviderConnection(existing.id, input)
             : await createProviderConnection(input);
         selectedConnectionId.value = connection.id;
         form.apiKey = "";
-        const verification = await verifyProviderConnection(connection.id);
         configStore.invalidateProviderConnections();
         await load();
-        if (verification.connection.status === "READY")
-            toast.success(t("settings.providerHub.toastConnectedVerified"));
-        else
-            toast.warning(
-                t("settings.providerHub.toastStatus", {
-                    status: statusLabel(verification.connection.status),
-                }),
-            );
-        saving.value = false;
+        toast.success(t("settings.providerHub.toastSaved"));
         closeForm();
     } catch (cause: unknown) {
         logger.warn("Provider Hub save failed", cause);
@@ -1140,6 +1173,40 @@ async function save() {
         }
     } finally {
         saving.value = false;
+    }
+}
+
+/**
+ * task-953（R19）：只验证不保存。验证端点只接受已落库的连接 ⇒ 新建表单先保存才可验证，
+ * 此处明确提示而不是偷偷写入；编辑态直接验证已保存的连接，不触发 POST/PATCH。
+ */
+async function verifyOnly() {
+    if (!validateForm()) return;
+    const connection = editingConnection.value;
+    if (!connection) {
+        toast.error(t("settings.providerHub.verifyNeedsSave"));
+        return;
+    }
+    verifyingForm.value = true;
+    try {
+        const result = await verifyProviderConnection(connection.id);
+        configStore.invalidateProviderConnections();
+        await load();
+        if (result.connection.status === "READY")
+            toast.success(t("settings.providerHub.toastVerifyOk"));
+        else
+            toast.error(
+                t("settings.providerHub.toastStatus", {
+                    status: statusLabel(result.connection.status),
+                }),
+            );
+    } catch (cause: unknown) {
+        logger.warn("Provider Hub form verification failed", cause);
+        toast.error(
+            cause instanceof Error ? cause.message : t("settings.providerHub.toastVerifyFailed"),
+        );
+    } finally {
+        verifyingForm.value = false;
     }
 }
 
@@ -2307,7 +2374,7 @@ onMounted(() => {
             @click.self="closeForm"
         >
             <form
-                class="max-h-[calc(100vh-48px)] w-full max-w-xl overflow-y-auto rounded-xl border bg-card shadow-2xl"
+                class="max-h-[calc(100vh-48px)] w-full max-w-3xl overflow-y-auto rounded-xl border bg-card shadow-2xl"
                 @submit.prevent="save"
             >
                 <header class="flex items-center justify-between border-b px-5 py-4">
@@ -2464,7 +2531,8 @@ onMounted(() => {
                             t("settings.providerHub.keyHint")
                         }}</span>
                     </label>
-                    <!-- task-146（DSD-1512）：密钥来源三态 —— 保留当前绑定 / 绑定已有凭据 / 内联新建一条凭据。 -->
+                    <!-- task-146（DSD-1512）+ task-953（R10）：编辑态保留「保留当前绑定」；
+                         新建态只有「新建密钥」（默认、在前）与「绑定已有凭据」两态。 -->
                     <div v-if="selectedProvider.credential.type !== 'none'" class="mt-4">
                         <span class="mb-1.5 block text-xs font-semibold">{{
                             t("settings.providerHub.fieldCredentialSource")
@@ -2517,20 +2585,20 @@ onMounted(() => {
                                 <Button
                                     type="button"
                                     size="sm"
-                                    :variant="credentialChoice === 'bind' ? 'default' : 'outline'"
-                                    data-testid="provider-credential-mode-bind"
-                                    @click="chooseBindMode"
-                                >
-                                    {{ t("settings.providerHub.credentialBindMode") }}
-                                </Button>
-                                <Button
-                                    type="button"
-                                    size="sm"
                                     :variant="credentialChoice === 'inline' ? 'default' : 'outline'"
                                     data-testid="provider-credential-mode-inline"
                                     @click="chooseInlineMode"
                                 >
                                     {{ t("settings.providerHub.credentialInlineMode") }}
+                                </Button>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    :variant="credentialChoice === 'bind' ? 'default' : 'outline'"
+                                    data-testid="provider-credential-mode-bind"
+                                    @click="chooseBindMode"
+                                >
+                                    {{ t("settings.providerHub.credentialBindMode") }}
                                 </Button>
                             </div>
                             <div v-if="credentialChoice === 'bind'" class="mt-2 space-y-2">
@@ -2594,15 +2662,6 @@ onMounted(() => {
                                 >
                                     {{ t("settings.providerHub.credentialDisabledWarning") }}
                                 </p>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    data-testid="provider-credential-create"
-                                    @click="createCredentialOpen = true"
-                                >
-                                    {{ t("settings.providerHub.credentialCreate") }}
-                                </Button>
                             </div>
                             <div v-else class="mt-2">
                                 <input
@@ -2641,7 +2700,9 @@ onMounted(() => {
                                 scope:
                                     formScope === "WORKSPACE"
                                         ? t("settings.providerHub.scopeWorkspace")
-                                        : t("settings.providerHub.scopeUser"),
+                                        : formScope === "INSTANCE"
+                                          ? t("settings.providerHub.scopeInstance")
+                                          : t("settings.providerHub.scopeUser"),
                             })
                         }}
                     </p>
@@ -2673,6 +2734,57 @@ onMounted(() => {
                         <span class="mt-1.5 block text-xs text-muted-foreground">{{
                             t("settings.providerHub.discoveryHint")
                         }}</span>
+                    </label>
+                    <label v-if="form.modelDiscovery === 'remote-models'" class="mt-4 block">
+                        <span class="mb-1.5 block text-xs font-semibold"
+                            >{{ t("settings.providerHub.fieldModelDiscoveryUrl") }}
+                            <span class="font-normal text-muted-foreground">{{
+                                t("settings.providerHub.optional")
+                            }}</span></span
+                        >
+                        <input
+                            v-model="form.modelDiscoveryUrl"
+                            data-testid="provider-connection-model-discovery-url"
+                            data-form-field="provider.modelDiscoveryUrl"
+                            class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                            type="url"
+                            :placeholder="modelDiscoveryFallbackUrl || 'https://...'"
+                        />
+                        <span
+                            v-if="modelDiscoveryFallbackUrl"
+                            class="mt-1.5 block text-xs text-muted-foreground"
+                            data-testid="provider-model-discovery-url-fallback"
+                        >
+                            {{
+                                t("settings.providerHub.modelDiscoveryUrlHint", {
+                                    url: modelDiscoveryFallbackUrl,
+                                })
+                            }}
+                        </span>
+                        <span
+                            v-if="modelDiscoveryUrlState.kind === 'invalid'"
+                            class="mt-1.5 block text-xs text-destructive"
+                            data-testid="provider-model-discovery-url-invalid"
+                        >
+                            {{ t("settings.providerHub.modelDiscoveryUrlInvalid") }}
+                        </span>
+                        <span
+                            v-else-if="modelDiscoveryUrlState.kind === 'cross-origin'"
+                            class="mt-1.5 block text-xs text-amber-600 dark:text-amber-400"
+                            data-testid="provider-model-discovery-url-cross-origin"
+                        >
+                            {{ t("settings.providerHub.modelDiscoveryUrlCrossOrigin") }}
+                        </span>
+                        <span
+                            v-if="
+                                form.modelDiscoveryUrl.trim() &&
+                                modelDiscoveryUrlState.kind !== 'invalid'
+                            "
+                            class="mt-1.5 block text-xs text-amber-600 dark:text-amber-400"
+                            data-testid="provider-model-discovery-url-unsupported"
+                        >
+                            {{ t("settings.providerHub.modelDiscoveryUrlUnsupported") }}
+                        </span>
                     </label>
                     <!-- PLAN-0622 Resource Governor：连接级限额（只在编辑已有连接时出现；
                          无编辑权限时组件自身只读，保存时随 PATCH 一起提交）。 -->
@@ -2706,27 +2818,28 @@ onMounted(() => {
                         {{ t("settings.providerHub.cancel") }}
                     </button>
                     <button
+                        type="button"
+                        data-testid="provider-connection-verify-only"
+                        class="rounded-md border px-3.5 py-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                        :disabled="saving || verifyingForm"
+                        @click="verifyOnly"
+                    >
+                        {{
+                            verifyingForm
+                                ? t("settings.providerHub.verifying")
+                                : t("settings.providerHub.verify")
+                        }}
+                    </button>
+                    <button
                         type="submit"
                         data-testid="provider-connection-submit"
                         class="rounded-md bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
                         :disabled="saving"
                     >
-                        {{
-                            saving
-                                ? t("settings.providerHub.saving")
-                                : t("settings.providerHub.saveVerify")
-                        }}
+                        {{ saving ? t("settings.providerHub.saving") : t("common.save") }}
                     </button>
                 </footer>
             </form>
         </div>
-        <!-- task-146：快捷新建凭据，成功后直接回填到下拉里（emit 载荷是新建出来的 CredentialSummary）。 -->
-        <CredentialCreateDialog
-            :open="createCredentialOpen"
-            :default-owner-type="credentialOwnerType"
-            :default-workspace-id="credentialOwnerId"
-            @created="onCredentialCreated"
-            @close="createCredentialOpen = false"
-        />
     </section>
 </template>

@@ -23,12 +23,12 @@ import {
     getDeleteImpact,
     listProviderCatalog,
     listProviderConnections,
+    inspectModelDiscoveryUrl,
     updateProviderConnection,
     verifyProviderConnection,
 } from "../../../services/providerConnectionService";
 import { ApiError, api, request } from "../../../composables/api";
 import type { CredentialSummary } from "../../../types";
-import CredentialCreateDialog from "../credentials/CredentialCreateDialog.vue";
 import { toast } from "vue-sonner";
 import { listVisibleTemplates, readTemplateConfig } from "../../../services/apiRequestTemplates";
 import { useConfigStore } from "../../../stores/config";
@@ -1212,6 +1212,7 @@ describe("ProviderHub credential binding (task-146)", () => {
         });
         const wrapper = await mountHub();
         const modal = await openCreate(wrapper);
+        await modal.get('[data-testid="provider-credential-mode-bind"]').trigger("click");
         // 候选按表单所属层拉：USER 层不带 ownerId。
         expect(api.listCredentials).toHaveBeenCalledWith({ ownerType: "USER" });
         // 候选已到手 ⇒ 空态提示不该出现（空态 = 当前作用域没有可用凭据）。
@@ -1282,6 +1283,7 @@ describe("ProviderHub credential binding (task-146)", () => {
         const wrapper = await mountHub();
         const modal = await openManage(wrapper);
         await modal.get('[data-testid="provider-credential-replace"]').trigger("click");
+        await modal.get('[data-testid="provider-credential-mode-bind"]').trigger("click");
         await setSelectValue(wrapper, '[data-testid="provider-credential-select"]', "cred-b");
         await flushPromises();
         await modal.get("form").trigger("submit");
@@ -1299,27 +1301,11 @@ describe("ProviderHub credential binding (task-146)", () => {
         });
         const wrapper = await mountHub();
         const modal = await openCreate(wrapper);
+        await modal.get('[data-testid="provider-credential-mode-bind"]').trigger("click");
         await setSelectValue(wrapper, '[data-testid="provider-credential-select"]', "cred-a");
         await flushPromises();
         expect(modal.get('[data-testid="provider-credential-disabled"]').text()).toContain(
             i18n.global.t("settings.providerHub.credentialDisabledWarning"),
-        );
-        wrapper.unmount();
-    });
-
-    it("fills the binding from a credential created in the shortcut dialog", async () => {
-        const wrapper = await mountHub();
-        const modal = await openCreate(wrapper);
-        await modal.get('[data-testid="provider-credential-create"]').trigger("click");
-        await flushPromises();
-        const dialog = wrapper.findComponent(CredentialCreateDialog);
-        expect(dialog.exists()).toBe(true);
-        dialog.vm.$emit("created", credentialRow({ id: "cred-new", label: "Fresh key" }));
-        await flushPromises();
-        await modal.get("form").trigger("submit");
-        await flushPromises();
-        expect(vi.mocked(createProviderConnection).mock.calls[0]![0]!.credentialId).toBe(
-            "cred-new",
         );
         wrapper.unmount();
     });
@@ -1330,6 +1316,7 @@ describe("ProviderHub credential binding (task-146)", () => {
         );
         const wrapper = await mountHub();
         const modal = await openCreate(wrapper);
+        await modal.get('[data-testid="provider-credential-mode-bind"]').trigger("click");
         expect(modal.get('[data-testid="provider-credential-error"]').text()).toContain(
             "403 FORBIDDEN: no credential read",
         );
@@ -1340,11 +1327,119 @@ describe("ProviderHub credential binding (task-146)", () => {
         const wrapper = mount(ProviderHub, { props: { scope: "WORKSPACE" } });
         await flushPromises();
         const modal = await openCreate(wrapper);
+        await modal.get('[data-testid="provider-credential-mode-bind"]').trigger("click");
         expect(modal.get('[data-testid="provider-credential-error"]').text()).toContain(
             i18n.global.t("settings.providerHub.credentialWorkspaceMissing"),
         );
         // 没有工作区就根本不发请求（而不是发一个 ownerType=WORKSPACE 的空查询）。
         expect(api.listCredentials).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("offers only two key-source modes, inline first and selected by default (task-953 R10)", async () => {
+        const wrapper = await mountHub();
+        const modal = await openCreate(wrapper);
+        const modes = modal.findAll('[data-testid^="provider-credential-mode-"]');
+        expect(modes).toHaveLength(2);
+        expect(modes[0]!.attributes("data-testid")).toBe("provider-credential-mode-inline");
+        expect(modes[1]!.attributes("data-testid")).toBe("provider-credential-mode-bind");
+        // 默认选中新建密钥：内联输入框在，绑定下拉不在；第三个「新建一条凭据」按钮已删除。
+        expect(modal.get('[data-testid="provider-credential-api-key"]').exists()).toBe(true);
+        expect(modal.find('[data-testid="provider-credential-select"]').exists()).toBe(false);
+        expect(modal.find('[data-testid="provider-credential-create"]').exists()).toBe(false);
+        await modes[1]!.trigger("click");
+        expect(modal.find('[data-testid="provider-credential-api-key"]').exists()).toBe(false);
+        expect(modal.get('[data-testid="provider-credential-select"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("verifies an existing connection without writing it (task-953 R19)", async () => {
+        const wrapper = await mountHub();
+        const modal = await openManage(wrapper);
+        await modal.get('[data-testid="provider-connection-verify-only"]').trigger("click");
+        await flushPromises();
+        expect(verifyProviderConnection).toHaveBeenCalledWith(user.id);
+        expect(updateProviderConnection).not.toHaveBeenCalled();
+        expect(wrapper.find('[data-testid="provider-connection-modal"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("saves without auto-verifying the connection (task-953 R19)", async () => {
+        const wrapper = await mountHub();
+        const modal = await openManage(wrapper);
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+        expect(updateProviderConnection).toHaveBeenCalledWith(user.id, expect.anything());
+        expect(verifyProviderConnection).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+});
+
+describe("task-953 R15 instance scope copy", () => {
+    it("shows Instance rather than User or an internal enum value", async () => {
+        const wrapper = mount(ProviderHub, { props: { scope: "INSTANCE", layer: "instance" } });
+        await flushPromises();
+        await wrapper.get('[data-testid="provider-hub-connect"]').trigger("click");
+        await flushPromises();
+        const picker = wrapper.find('[data-testid="provider-picker-modal"]');
+        await picker.findAll('button[data-testid^="provider-picker-"]').at(0)!.trigger("click");
+        await flushPromises();
+        const modal = wrapper.get('[data-testid="provider-connection-modal"]');
+        expect(modal.text()).toContain(i18n.global.t("settings.providerHub.scopeInstance"));
+        expect(modal.text()).not.toContain(i18n.global.t("settings.providerHub.scopeUser"));
+        expect(modal.text()).not.toMatch(/\b(INSTANCE|WORKSPACE|USER)\b/);
+        wrapper.unmount();
+    });
+});
+
+describe("task-953 R17 model discovery URL", () => {
+    it("falls back to {baseUrl}/models when the custom URL is empty", () => {
+        expect(inspectModelDiscoveryUrl("https://api.example/v1", "")).toEqual({
+            kind: "empty",
+            effective: "https://api.example/v1/models",
+        });
+    });
+
+    it("rejects non-http(s) URLs and keeps the fallback", () => {
+        expect(inspectModelDiscoveryUrl("https://api.example/v1", "ftp://files.example")).toEqual({
+            kind: "invalid",
+            effective: "https://api.example/v1/models",
+        });
+    });
+
+    it("flags a cross-origin model list URL", () => {
+        expect(
+            inspectModelDiscoveryUrl("https://api.example/v1", "https://models.example/list"),
+        ).toEqual({ kind: "cross-origin", effective: "https://models.example/list" });
+    });
+
+    it("accepts a same-origin model list URL", () => {
+        expect(
+            inspectModelDiscoveryUrl("https://api.example/v1", "https://api.example/models"),
+        ).toEqual({ kind: "same-origin", effective: "https://api.example/models" });
+    });
+
+    it("reports the backend-unsupported field instead of silently dropping it", async () => {
+        const wrapper = await mountHub();
+        await wrapper.get('[data-testid="provider-hub-connect"]').trigger("click");
+        await flushPromises();
+        const picker = wrapper.find('[data-testid="provider-picker-modal"]');
+        await picker.findAll('button[data-testid^="provider-picker-"]').at(0)!.trigger("click");
+        await flushPromises();
+        const modal = wrapper.get('[data-testid="provider-connection-modal"]');
+        await modal.get('[data-testid="provider-credential-api-key"]').setValue("sk-test");
+        await modal
+            .get('[data-testid="provider-connection-model-discovery-url"]')
+            .setValue("https://models.example/list");
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+        expect(toast.warning).toHaveBeenCalledWith(
+            i18n.global.t("settings.providerHub.modelDiscoveryUrlCrossOrigin"),
+        );
+        expect(toast.error).toHaveBeenCalledWith(
+            i18n.global.t("settings.providerHub.modelDiscoveryUrlUnsupported"),
+        );
+        expect(createProviderConnection).not.toHaveBeenCalled();
         wrapper.unmount();
     });
 });

@@ -43,6 +43,52 @@ export interface ProviderConnectionListResponse {
     connections: ProviderConnection[];
 }
 
+/**
+ * task-953（R17）：连接级「模型列表地址」的解析结果。
+ *
+ * <p>留空 ⇒ 回落 `{baseUrl}/models`；填写 ⇒ 只接受 http(s)，并与 Base URL 做同源判定。
+ * CP 侧尚未提供 `modelDiscoveryUrl` 列，故本函数只描述 **UI 期望值**，提交面由
+ * ProviderHub 显式拦截并报「当前后端未支持」（不静默丢弃）。</p>
+ */
+export type ModelDiscoveryUrlState =
+    | { kind: "empty"; effective: string }
+    | { kind: "invalid"; effective: string }
+    | { kind: "same-origin"; effective: string }
+    | { kind: "cross-origin"; effective: string }
+    | { kind: "unknown-origin"; effective: string };
+
+export function inspectModelDiscoveryUrl(
+    baseUrl: string | null | undefined,
+    modelDiscoveryUrl: string | null | undefined,
+): ModelDiscoveryUrlState {
+    const base = (baseUrl ?? "").trim();
+    const custom = (modelDiscoveryUrl ?? "").trim();
+    const fallback = base ? `${base.replace(/\/+$/, "")}/models` : "";
+    if (!custom) return { kind: "empty", effective: fallback };
+
+    let customUrl: URL;
+    try {
+        customUrl = new URL(custom);
+    } catch {
+        return { kind: "invalid", effective: fallback };
+    }
+    if (customUrl.protocol !== "http:" && customUrl.protocol !== "https:") {
+        return { kind: "invalid", effective: fallback };
+    }
+
+    let baseOrigin: string | null = null;
+    try {
+        baseOrigin = new URL(base).origin;
+    } catch {
+        baseOrigin = null;
+    }
+    if (!baseOrigin) return { kind: "unknown-origin", effective: custom };
+    return {
+        kind: customUrl.origin === baseOrigin ? "same-origin" : "cross-origin",
+        effective: custom,
+    };
+}
+
 export interface ProviderVerifyResponse {
     connection: ProviderConnection;
     models: Array<{ name: string }>;
