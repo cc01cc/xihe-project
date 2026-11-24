@@ -157,7 +157,8 @@ public class DelegationController {
         String authorizationBody = chatSubmissionService.delegationAuthorizationBody(task);
         ChatSubmissionService.SpawnInvocation invocation = new ChatSubmissionService.SpawnInvocation(
                 parentRun.getId().toString(), idempotencyKey, session.getId().toString(), null,
-                userId, workspaceId, principalId.toString(), authorizationBody);
+                userId, workspaceId, principalId.toString(), authorizationBody,
+                principalId.toString());
         AgentSpawnAuthorizationService.GateResult gate;
         try {
             gate = spawnAuthorization.authorizeUserSpawn(invocation, approvalRequestId);

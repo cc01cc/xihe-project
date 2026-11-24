@@ -14,6 +14,8 @@ import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.Face;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +40,8 @@ public class AgentSpawnAuthorizationService {
     public static final String APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id";
 
     private static final Logger logger = LoggerFactory.getLogger(AgentSpawnAuthorizationService.class);
+    /** Policy-side only: projects the target subtree onto the extractor's `target` resource key. */
+    private static final ObjectMapper POLICY_BODY_MAPPER = new ObjectMapper();
     private final PolicyEngine policy;
     private final ApprovalService approvals;
     private final SseEmitterManager sseManager;
@@ -95,16 +99,16 @@ public class AgentSpawnAuthorizationService {
         String tool = ChatSubmissionService.SPAWN_TOOL_NAME;
         PolicyContext context = policy.loadContext(
                 invocation.userId(), invocation.workspaceId(), invocation.parentSessionId());
-        List<String> hierarchy = spawnHierarchyResources(invocation, userOnly);
-        // task-966 / D-1942: the agent (self-spawn) arm AND-s `action:clone` onto the spawn face,
-        // so the atom declared for 分身 is actually evaluated. The human delegation arm
-        // (`userOnly`) passes nothing: human presets never carry `clone`, and requiring it there
-        // would deny every delegation. Both arms still carry the `agent-unit:` hierarchy resource
-        // when the caller has one.
-        List<String> extraActionClasses = userOnly
-                ? List.of()
-                : List.of(ToolFaceRegistry.ACTION_CLONE);
-        boolean allowed = policy.allowsByGrant(context, tool, invocation.authorizationBody(),
+        List<String> hierarchy = spawnHierarchyResources(invocation);
+        String policyBody = spawnPolicyBody(invocation, hierarchy);
+        // task-935 / task-961: an explicit target is a delegation to that principal, so only the
+        // spawn face is evaluated. No target keeps the old self-spawn meaning (分身) and AND-s
+        // `action:clone`. The human delegation arm never asks for clone: human presets do not
+        // carry it, and its target is always explicit.
+        List<String> extraActionClasses = !userOnly && invocation.targetAgentPrincipalId() == null
+                ? List.of(ToolFaceRegistry.ACTION_CLONE)
+                : List.of();
+        boolean allowed = policy.allowsByGrant(context, tool, policyBody,
                 invocation.parentSessionId(), invocation.userId(), invocation.workspaceId(),
                 userOnly, hierarchy, extraActionClasses);
         if (!allowed) {
@@ -121,7 +125,7 @@ public class AgentSpawnAuthorizationService {
                     "An explicit SPAWN_AGENT grant is required");
         }
 
-        PolicyVerdict verdict = policy.evaluateVerdict(context, tool, invocation.authorizationBody(),
+        PolicyVerdict verdict = policy.evaluateVerdict(context, tool, policyBody,
                 invocation.parentSessionId(), null, invocation.userId(), invocation.workspaceId());
         if (verdict.effect() == PolicyEffect.DENY) {
             audit.record(invocation.parentSessionId(), tool, "authorization_denied", "policy=deny");
@@ -156,20 +160,23 @@ public class AgentSpawnAuthorizationService {
      * exactly like {@code mcp:} does for the gateway channel. Notification tools (TO/CC,
      * {@code team_task_*}) never enter this gate at all.
      *
-     * <p>The human delegation channel is left without this resource in this card: its target
-     * selection is task-961, and adding the caller's own subtree there would judge the wrong
-     * subject. An agent with no unit row gets no hierarchy resource (the existing grant path still
-     * applies); the target-selection half owns the target's subtree.</p>
+     * <p>When the call names an explicit target, that target's unit subtree is the resource;
+     * otherwise the calling agent's own subtree is. An agent/target with no unit row gets no
+     * hierarchy resource (the existing grant path still applies).</p>
      */
-    private List<String> spawnHierarchyResources(ChatSubmissionService.SpawnInvocation invocation,
-                                                 boolean userOnly) {
-        if (userOnly || orgUnitMembers == null || orgUnits == null
-                || invocation.principalId() == null || invocation.principalId().isBlank()) {
+    private List<String> spawnHierarchyResources(ChatSubmissionService.SpawnInvocation invocation) {
+        if (orgUnitMembers == null || orgUnits == null) {
+            return List.of();
+        }
+        String subject = invocation.targetAgentPrincipalId() != null
+                ? invocation.targetAgentPrincipalId()
+                : invocation.principalId();
+        if (subject == null || subject.isBlank()) {
             return List.of();
         }
         UUID principalId;
         try {
-            principalId = UUID.fromString(invocation.principalId().trim());
+            principalId = UUID.fromString(subject.trim());
         } catch (IllegalArgumentException notUuid) {
             return List.of();
         }
@@ -182,6 +189,34 @@ public class AgentSpawnAuthorizationService {
                 .orElse(null);
         String resource = ResourceNamespaces.agentUnitResource(path);
         return resource == null ? List.of() : List.of(resource);
+    }
+
+    /**
+     * task-961: when an explicit target is present, tell the policy extractor which object the
+     * spawn targets. {@code PolicyResourceExtractor} recognizes the {@code target} key, so the
+     * request carries {@code agent-unit:<target subtree>} instead of its resource-less {@code *}
+     * fallback. The durable authorization body is untouched (approval fingerprints keep their
+     * existing shape); only the evaluation copy is annotated.
+     */
+    private static String spawnPolicyBody(ChatSubmissionService.SpawnInvocation invocation,
+                                          List<String> hierarchy) {
+        if (invocation.targetAgentPrincipalId() == null || hierarchy.isEmpty()) {
+            return invocation.authorizationBody();
+        }
+        try {
+            com.fasterxml.jackson.databind.node.ObjectNode body =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) POLICY_BODY_MAPPER
+                            .readTree(invocation.authorizationBody());
+            com.fasterxml.jackson.databind.node.ObjectNode arguments =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) body.path("params").path("arguments");
+            if (arguments == null || arguments.isMissingNode()) {
+                return invocation.authorizationBody();
+            }
+            arguments.put("target", hierarchy.get(0));
+            return body.toString();
+        } catch (JsonProcessingException | ClassCastException notJson) {
+            return invocation.authorizationBody();
+        }
     }
 
     private GateResult createPendingApproval(ChatSubmissionService.SpawnInvocation invocation) {

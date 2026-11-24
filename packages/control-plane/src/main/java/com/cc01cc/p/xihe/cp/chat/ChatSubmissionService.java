@@ -625,10 +625,11 @@ public class ChatSubmissionService {
         // the 0463 execution-domain invocation row, never a Ledger item.
         McpInvocationService.SpawnInvocationView invocation = requireSpawnInvocation(parentRunId, toolCallId);
         validateSpawnInvocation(parentRunId, invocation);
-        String content = deriveSpawnContent(invocation.argumentsPreview());
+        SpawnArguments arguments = deriveSpawnArguments(invocation.argumentsPreview());
         return new SpawnInvocation(parentRunId, toolCallId, parentSession.getId().toString(),
                 invocation.id(), parentRun.getUserId(), parentRun.getWorkspaceId(),
-                uuidStr(parentRun.getAgentPrincipalId()), createSpawnAuthorizationBody(content));
+                uuidStr(parentRun.getAgentPrincipalId()), createSpawnAuthorizationBody(arguments),
+                arguments.targetAgentPrincipalId());
     }
 
     public void validateSpawnMcpArguments(SpawnInvocation invocation, String mcpBody) {
@@ -646,7 +647,7 @@ public class ChatSubmissionService {
             if (request == null || !"tools/call".equals(request.path("method").asText())
                     || params == null || !SPAWN_TOOL_NAME.equals(params.path("name").asText())
                     || requestArguments == null || !requestArguments.isObject()
-                    || requestArguments.size() != 1 || !requestArguments.equals(expectedArguments)) {
+                    || !requestArguments.equals(expectedArguments)) {
                 throw new CpApiException(HttpStatus.CONFLICT, "SPAWN_ARGUMENTS_CHANGED",
                         "MCP spawn arguments do not match the durable Agent tool call");
             }
@@ -681,8 +682,9 @@ public class ChatSubmissionService {
         McpInvocationService.SpawnInvocationView invocation = requireSpawnInvocation(parentRunId, toolCallId);
         validateSpawnInvocation(parentRunId, invocation);
 
-        String content = deriveSpawnContent(invocation.argumentsPreview());
-        String authorizationBody = createSpawnAuthorizationBody(content);
+        SpawnArguments arguments = deriveSpawnArguments(invocation.argumentsPreview());
+        String content = arguments.prompt();
+        String authorizationBody = createSpawnAuthorizationBody(arguments);
         if (!authorizationBody.equals(authorization.authorizationBody())) {
             throw new CpApiException(HttpStatus.CONFLICT, "SPAWN_ARGUMENTS_CHANGED",
                     "Durable spawn arguments changed after authorization");
@@ -710,7 +712,7 @@ public class ChatSubmissionService {
                     .orElseThrow(() -> new IllegalStateException("Spawn session is missing"));
             entityManager.refresh(existingSession);
             return new SpawnResult(existingSession.getId().toString(), existingSpawn.getId().toString(),
-                    uuidStr(parentRun.getAgentPrincipalId()), parentRun.getWorkspaceId());
+                    childAgentPrincipalIdFor(arguments, parentRun), parentRun.getWorkspaceId());
         }
 
         // PLAN-0407 T2.5：cancel 获胜拒绝新 spawn——门在 child Session 创建之前，
@@ -726,7 +728,7 @@ public class ChatSubmissionService {
         // PLAN-0689 A1 (T1.1 / design §3-C): the fact source is the initiating Run, not the parent
         // Session column — the column is being dropped, and the Run responder is what the child
         // actually inherits (invariant §2.4 "spawn 只继承发起者").
-        if (parentRun.getAgentPrincipalId() == null) {
+        if (arguments.targetAgentPrincipalId() == null && parentRun.getAgentPrincipalId() == null) {
             throw parentPrincipalMissing();
         }
         // PLAN-0689 A7/D-54 (P0-0c): the snapshot column survives as the authorization input, so a
@@ -768,7 +770,7 @@ public class ChatSubmissionService {
         // admitted through its PRIMARY participant row (ensurePrimaryParticipant below), which is
         // what SessionReadService (A2c) reads. Only the snapshot column survives (A7/D-54), and a
         // child whose roster row is missing still fails closed with 403 in persist() → resolveAgent().
-        String childAgentPrincipalId = uuidStr(parentRun.getAgentPrincipalId());
+        String childAgentPrincipalId = childAgentPrincipalIdFor(arguments, parentRun);
         Session childSession = new Session(parentRun.getWorkspaceId(), parentRun.getUserId(),
                 parentSession.getTitle());
         childSession.setId(UUID.randomUUID());
@@ -779,7 +781,7 @@ public class ChatSubmissionService {
         // PLAN-0689 A7/D-54 (P0-0): the snapshot column survives as the authorization input; write the
         // PRIMARY's binding-time cap from the same single entry the create/fork paths use.
         childSession.setAgentPermissionsSnapshot(agentPrincipalService.resolveCapFor(
-                uuidStr(parentRun.getAgentPrincipalId()), parentRun.getWorkspaceId()));
+                childAgentPrincipalId, parentRun.getWorkspaceId()));
         if (sessionSnapshotAudit != null) {
             sessionSnapshotAudit.frozen(childSession);
         }
@@ -1044,7 +1046,7 @@ public class ChatSubmissionService {
         return new LockedSpawnParent(parentSession, parentRun);
     }
 
-    private String deriveSpawnContent(String argumentsPreview) {
+    private SpawnArguments deriveSpawnArguments(String argumentsPreview) {
         if (argumentsPreview == null || argumentsPreview.isBlank()
                 || argumentsPreview.length() >= MAX_SPAWN_ARGUMENTS_PREVIEW_LENGTH) {
             throw invalidSpawnArguments();
@@ -1057,6 +1059,7 @@ public class ChatSubmissionService {
                 throw invalidSpawnArguments();
             }
             JsonNode prompt = args.get("prompt");
+            JsonNode target = args.get("agentPrincipalId");
             boolean envelope = false;
             if (prompt == null && args.has("params")) {
                 // BL-220 read-side tolerance: 旧行可能是整条 JSON-RPC 信封 —— CP MCP 代理侧
@@ -1070,16 +1073,17 @@ public class ChatSubmissionService {
                     JsonNode envelopeArguments = params.get("arguments");
                     if (envelopeArguments != null && envelopeArguments.isObject()) {
                         prompt = envelopeArguments.get("prompt");
+                        target = envelopeArguments.get("agentPrincipalId");
                         envelope = prompt != null;
                     }
                 }
             }
-            // 纯参数形态保持原有严格度：必须恰好像 {"prompt": "..."} 一个键。
+            // 纯参数形态只接受 prompt 与可选的 agentPrincipalId（显式目标）。
             if (prompt == null || !prompt.isTextual() || prompt.textValue().isBlank()
-                    || (!envelope && args.size() != 1)) {
+                    || (!envelope && !spawnArgumentKeys(args))) {
                 throw invalidSpawnArguments();
             }
-            return prompt.textValue();
+            return new SpawnArguments(prompt.textValue(), spawnTargetPrincipalId(target));
         } catch (JsonProcessingException e) {
             logger.warn("[LIFECYCLE] service=cp event=spawn_arguments_rejected failureType={}",
                     e.getClass().getSimpleName());
@@ -1087,15 +1091,55 @@ public class ChatSubmissionService {
         }
     }
 
-    private String createSpawnAuthorizationBody(String content) {
+    private static boolean spawnArgumentKeys(JsonNode args) {
+        var fields = args.fieldNames();
+        while (fields.hasNext()) {
+            String key = fields.next();
+            if (!"prompt".equals(key) && !"agentPrincipalId".equals(key)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Normalizes the optional explicit target; a malformed value is rejected, never dropped. */
+    private static String spawnTargetPrincipalId(JsonNode target) {
+        if (target == null) {
+            return null;
+        }
+        if (!target.isTextual() || target.textValue().isBlank()) {
+            throw invalidSpawnArguments();
+        }
+        try {
+            return UUID.fromString(target.textValue().trim()).toString();
+        } catch (IllegalArgumentException invalid) {
+            throw invalidSpawnArguments();
+        }
+    }
+
+    private String createSpawnAuthorizationBody(SpawnArguments arguments) {
         com.fasterxml.jackson.databind.node.ObjectNode body = objectMapper.createObjectNode();
         body.put("jsonrpc", "2.0");
         body.put("method", "tools/call");
         body.put("id", 1);
         com.fasterxml.jackson.databind.node.ObjectNode params = body.putObject("params");
         params.put("name", SPAWN_TOOL_NAME);
-        params.putObject("arguments").put("prompt", content);
+        com.fasterxml.jackson.databind.node.ObjectNode spawnArguments = params.putObject("arguments");
+        spawnArguments.put("prompt", arguments.prompt());
+        if (arguments.targetAgentPrincipalId() != null) {
+            spawnArguments.put("agentPrincipalId", arguments.targetAgentPrincipalId());
+        }
         return body.toString();
+    }
+
+    private String createSpawnAuthorizationBody(String content) {
+        return createSpawnAuthorizationBody(new SpawnArguments(content, null));
+    }
+
+    private static String childAgentPrincipalIdFor(SpawnArguments arguments, ChatRun parentRun) {
+        return arguments.targetAgentPrincipalId() != null
+                ? arguments.targetAgentPrincipalId()
+                : uuidStr(parentRun.getAgentPrincipalId());
     }
 
     /**
@@ -1663,9 +1707,21 @@ public class ChatSubmissionService {
 
     public record SpawnResult(String sessionId, String runId, String principalId, String workspaceId) {}
 
+    /** The two durable spawn arguments: the prompt plus the optional explicit target principal. */
+    private record SpawnArguments(String prompt, String targetAgentPrincipalId) {}
+
     public record SpawnInvocation(String parentRunId, String toolCallId, String parentSessionId,
                                   UUID mcpInvocationId, String userId,
-                                  String workspaceId, String principalId, String authorizationBody) {
+                                  String workspaceId, String principalId, String authorizationBody,
+                                  String targetAgentPrincipalId) {
+        /** Self-spawn shape: no explicit target. */
+        public SpawnInvocation(String parentRunId, String toolCallId, String parentSessionId,
+                               UUID mcpInvocationId, String userId, String workspaceId,
+                               String principalId, String authorizationBody) {
+            this(parentRunId, toolCallId, parentSessionId, mcpInvocationId, userId, workspaceId,
+                    principalId, authorizationBody, null);
+        }
+
         @Override
         public String toString() {
             return "SpawnInvocation[parentRunId=" + parentRunId + ", toolCallId=" + toolCallId
