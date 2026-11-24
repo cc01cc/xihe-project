@@ -286,6 +286,25 @@ public class PresetGrantMaterializer {
     }
 
     /**
+     * task-996 (governance realign): materialize and bump the epoch <b>only when</b> the set
+     * actually changed.
+     *
+     * <p>{@link #materializeSubjectWithEpochBump} always bumps because its caller (an owner
+     * transfer) is an authorization change by definition. A governance replay is different: a
+     * subject already in sync must stay logged in, so a no-op realign writes no rows, logs no
+     * audit line and leaves {@code users.token_version} alone.</p>
+     */
+    @Transactional
+    public Result materializeSubjectAndBumpIfChanged(String subjectType, UUID subjectId,
+                                                     UUID actorUserId, String auditWorkspaceId) {
+        Result result = materializeSubject(subjectType, subjectId, actorUserId, auditWorkspaceId);
+        if (result.changed() && AuthzContext.SUBJECT_USER.equals(subjectType)) {
+            bumpUserEpoch(subjectId);
+        }
+        return result;
+    }
+
+    /**
      * Replays one preset onto every subject bound to it — an <b>explicit governance act</b>
      * (the 「重新对齐」 face), not an edit hook.
      *
@@ -601,5 +620,21 @@ public class PresetGrantMaterializer {
             return AccessScope.workspace(grant.getScopeId());
         }
         throw new IllegalStateException("grants row has an invalid scope: " + grant.getId());
+    }
+
+    /**
+     * task-996: package-private read of the binding-scope projection so the governance compare
+     * face cannot drift from the write path (one implementation, one answer).
+     */
+    static AccessScope scopeOfBinding(GrantPresetBinding binding) {
+        return bindingScope(binding);
+    }
+
+    /**
+     * task-996: package-private read of the grant-scope projection, for the same reason as
+     * {@link #scopeOfBinding}.
+     */
+    static AccessScope scopeOfGrant(AuthorizationGrant grant) {
+        return grantScope(grant);
     }
 }
