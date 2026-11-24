@@ -176,10 +176,11 @@ describe("AppLayout navigation IA (PLAN-0582 S1/S2 → PLAN-0753 T3 splitter)", 
      * 无条件带 `transition-[flex-grow]`，浏览器会从 0 起算 ⇒ 主列先塌成几像素再爬回来；
      * 工作台在这段窗口内量一次几何就会记录成塌缩（用户看到 70/382px、刷新才恢复）。
      *
-     * 抽象判据（不锁像素、不依赖 jsdom 布局）：**layout 就绪之前，主列面板不得声明
-     * flex-grow 过渡**。就绪后才允许为用户触发的折叠/键盘操作保留动画。
+     * 抽象判据（不锁像素、不依赖 jsdom 布局）：**主列面板不得声明 flex-grow 过渡** ——
+     * 壳的宽度动画只要存在，就会在某个重挂载时机从旧值（含 0）起算。宽度必须逐帧等于
+     * 存储值，动画留给内层面板。
      */
-    it("does not animate flex-grow before reka reports the first layout", async () => {
+    it("does not animate the shell splitter's flex-grow", async () => {
         const wrapper = await mountLayout(createTestRouter());
         const mainPanel = wrapper.findAll("[data-panel]")[1];
         expect(mainPanel.classes()).toContain("transition-none");

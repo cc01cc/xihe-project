@@ -158,40 +158,7 @@ const navBridge = useSplitterPanelBridge({
     handleId: NAV_RESIZE_HANDLE_ID,
     isCollapsed: () => navPanelCollapsed.value,
 });
-const { resizing: navResizing, layoutReady: navLayoutReady } = navBridge;
-/**
- * task-1017：跨页返回时整块壳会重新挂载，panel 的 `flex-grow` 从 0 起算。此前无条件挂
- * `transition-[flex-grow]` ⇒ 新挂载的 300ms 里主列从 ~5px 爬到最终宽度（实测首帧
- * `main=5px`、~150ms 时 715px）。壳内的 WorkspaceWorkbench 与任何「返回后立刻量一次」的
- * 消费者都在这段里读到塌缩值（task-1017 的 70/382px 读数即落在该窗口），看起来像布局
- * 被压死、刷新才恢复。
- *
- * 修法：**首帧不参与动画** —— 只有 reka 报过一次尺寸（`layoutReady`，即 layout 已初始化）
- * 之后才启用 flex-grow 过渡。跨页重挂载因此直接以最终宽度完成首绘；用户后续的拖拽 /
- * 键盘折叠仍有过渡。禁止用 setTimeout/强制 reflow 绕过。
- */
-/**
- * 首次布局那一帧也不参与动画：reka 在**首次测量之后**才把最终 `flex-grow` 写进内联样式
- * （实测挂载时先无内联值，随后写成 21/79）。只 gate `layoutReady` 不够 —— class 与那次
- * 写入同帧翻转，浏览器仍从 0 起算并动画 300ms。这里在 layoutReady 之后再等**两次 rAF**
- * （最终宽度已绘制）才允许过渡。rAF 是「下一帧」语义，不是定时器兜底：不设固定延时、
- * 不依赖机器速度。
- */
-const navShellSettled = ref(false);
-watch(navLayoutReady, (ready) => {
-    if (!ready) {
-        navShellSettled.value = false;
-        return;
-    }
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            if (navLayoutReady.value) navShellSettled.value = true;
-        });
-    });
-});
-const navShellAnimated = computed(
-    () => navShellSettled.value && navLayoutReady.value && !navResizing.value,
-);
+const { resizing: navResizing } = navBridge;
 
 function setNavPanel(el: unknown): void {
     navPanelEl.value = (el as SplitterPanelExposed | null) ?? null;
@@ -467,7 +434,6 @@ onUnmounted(() => {
                     :is-mobile="isMobile"
                     :force-collapsed="navYielded"
                     :resizing="navResizing"
-                    :layout-ready="navShellAnimated"
                 />
             </SplitterPanel>
             <!--
@@ -495,12 +461,7 @@ onUnmounted(() => {
             >
                 <SashGrip testid="sidebar-resizer-grip" />
             </SplitterResizeHandle>
-            <SplitterPanel
-                class="flex min-h-0 min-w-0"
-                :class="
-                    navShellAnimated ? 'transition-[flex-grow] duration-300' : 'transition-none'
-                "
-            >
+            <SplitterPanel class="flex min-h-0 min-w-0 transition-none">
                 <main
                     id="main-content"
                     tabindex="-1"
