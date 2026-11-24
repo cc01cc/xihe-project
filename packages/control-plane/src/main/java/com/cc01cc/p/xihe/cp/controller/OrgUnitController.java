@@ -170,4 +170,20 @@ public class OrgUnitController {
             @RequestParam(defaultValue = "false") boolean includeDescendants) {
         return readService.members(unitId, includeDescendants);
     }
+
+    /**
+     * task-985: the "add a member" picker. Server-side candidate judgement
+     * ({@code findUnassignedCandidates}) — a subject already placed anywhere in the tree or a
+     * disabled subject is absent by construction, so the client must not fetch a broader directory
+     * and filter it itself. The gates (scope 404 before atom 403) are the write face's own, so a
+     * read-only member cannot enumerate unassigned subjects.
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{unitId}/member-candidates")
+    public OrgUnitWireView.MemberCandidateList memberCandidates(
+            @PathVariable String unitId,
+            @RequestParam String memberKind,
+            @RequestParam(required = false) String q) {
+        return memberService.candidates(unitId, memberKind, q);
+    }
 }

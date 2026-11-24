@@ -51,6 +51,12 @@ function writeCalls(): Call[] {
     return calls.filter((call) => call.method !== "GET");
 }
 
+function candidateCalls(): Call[] {
+    return calls.filter((call) =>
+        call.path.startsWith("/api/v1/org-units/u-root/member-candidates"),
+    );
+}
+
 async function mountPanel(unit: typeof UNIT | null) {
     const wrapper = mount(OrgUnitWritePanel, {
         props: { unit },
@@ -132,13 +138,13 @@ describe("task-954 R20/R22：新建子单元的父单元与禁用门", () => {
 describe("task-954 R28/R23：加成员先确认、可多选", () => {
     it("人工多选：首击只落确认态（零写请求），确认后 N 条 PUT（R23+R28）", async () => {
         mockApi((url) => {
-            if (url.pathname.endsWith("/users")) {
+            if (url.pathname.endsWith("/member-candidates")) {
                 return {
                     status: 200,
                     body: {
-                        items: [
-                            { id: "m-1", name: "alice", username: "alice", email: "a@x.io" },
-                            { id: "m-2", name: "bob", username: "bob", email: "b@x.io" },
+                        candidates: [
+                            { memberKind: "human", memberId: "m-1", displayName: "alice" },
+                            { memberKind: "human", memberId: "m-2", displayName: "bob" },
                         ],
                     },
                 };
@@ -160,6 +166,14 @@ describe("task-954 R28/R23：加成员先确认、可多选", () => {
         const wrapper = await mountPanel(UNIT);
         await wrapper.get('[data-testid="org-write-add-member"]').trigger("click");
         await vi.waitFor(() => expect(dialog("org-write-subject-m-1")).toBeTruthy());
+
+        // task-985：请求必须打到 candidate 端点，且不再调全集目录面。
+        expect(candidateCalls().length, "加成员候选必须走 /member-candidates").toBe(1);
+        expect(dialog("org-write-subject-m-1")).toBeTruthy();
+        expect(
+            calls.filter((call) => call.path.startsWith("/api/v1/users")),
+            "不得再取全量用户目录后本地过滤",
+        ).toEqual([]);
 
         await clickCheckbox("m-1");
         await clickCheckbox("m-2");
@@ -191,14 +205,19 @@ describe("task-954 R28/R23：加成员先确认、可多选", () => {
 
     it("智能体模式：搜索框可用、按名称过滤、跨搜索保留多选并提交 N 条 agent_principal", async () => {
         mockApi((url, method) => {
-            if (url.pathname.endsWith("/agent-principals")) {
+            if (url.pathname.endsWith("/member-candidates")) {
+                const needle = (url.searchParams.get("q") ?? "").toLowerCase();
+                const all = [
+                    { memberKind: "agent_principal", memberId: "p-1", displayName: "codebot" },
+                    { memberKind: "agent_principal", memberId: "p-2", displayName: "writer" },
+                ];
                 return {
                     status: 200,
                     body: {
-                        principals: [
-                            { principalId: "p-1", name: "codebot" },
-                            { principalId: "p-2", name: "writer" },
-                        ],
+                        // 服务端按 display-name 过滤；mock 只复现「q 只缩不放」的契约。
+                        candidates: needle
+                            ? all.filter((row) => row.displayName.toLowerCase().includes(needle))
+                            : all,
                     },
                 };
             }
@@ -223,11 +242,20 @@ describe("task-954 R28/R23：加成员先确认、可多选", () => {
         await setOnlySelectValue(wrapper, "agent_principal");
         await vi.waitFor(() => expect(dialog("org-write-subject-p-1")).toBeTruthy());
 
+        // task-985：智能体模式同样走 candidate 端点，不再调 /agent-principals 全集。
+        expect(
+            calls.filter((call) => call.path.startsWith("/api/v1/agent-principals")),
+            "不得再取全量 agent principal 后本地过滤",
+        ).toEqual([]);
+        expect(candidateCalls().at(-1)?.path).toContain("memberKind=agent_principal");
+
         const search = dialog("org-write-search") as HTMLInputElement;
         expect(search.hasAttribute("disabled"), "智能体模式搜索框被禁用").toBe(false);
 
         search.value = "code";
         search.dispatchEvent(new Event("input", { bubbles: true }));
+        // v-model on the shadcn Input goes through a watcher (pre-flush); let it land before Enter.
+        await flushPromises();
         search.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
         await vi.waitFor(() => {
             expect(dialog("org-write-subject-p-1")).toBeTruthy();
@@ -237,6 +265,7 @@ describe("task-954 R28/R23：加成员先确认、可多选", () => {
 
         search.value = "";
         search.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushPromises();
         search.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
         await vi.waitFor(() => expect(dialog("org-write-subject-p-2")).toBeTruthy());
         await clickCheckbox("p-2");

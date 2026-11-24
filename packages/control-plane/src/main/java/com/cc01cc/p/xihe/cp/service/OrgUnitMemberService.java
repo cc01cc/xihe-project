@@ -116,6 +116,31 @@ public class OrgUnitMemberService {
     }
 
     /**
+     * task-985: the HTTP face of {@link OrgUnitMemberRepository#findUnassignedCandidates}. It is
+     * gated exactly like {@link #move}: scope first (404 for a non-member, any unit id), then
+     * {@code MANAGE_ORG_UNIT_MEMBERS} (403), then the unit must be inside the caller's scope (403).
+     *
+     * <p>The repository, not the client, decides who may be offered: a subject already placed
+     * anywhere in the tree and a disabled subject are both absent. Filtering a broader directory
+     * client-side is precisely the bug this face replaces, so the only narrowing argument is
+     * {@code q} (a display-name search) — it can never widen the set.</p>
+     */
+    @Transactional(readOnly = true)
+    public OrgUnitWireView.MemberCandidateList candidates(String unitIdValue,
+                                                         String memberKindValue, String query) {
+        OrgUnitAccess.Scope scope = access.resolve(MANAGE_MEMBERS_ATOM);
+        requireUnit(unitIdValue, scope);
+        String memberKind = requireKind(memberKindValue);
+        List<OrgUnitWireView.MemberCandidate> rows = members
+                .findUnassignedCandidates(memberKind, query == null ? null : query.trim())
+                .stream()
+                .map(row -> new OrgUnitWireView.MemberCandidate(
+                        row.memberKind(), row.memberId(), row.displayName()))
+                .toList();
+        return new OrgUnitWireView.MemberCandidateList(rows);
+    }
+
+    /**
      * R31: "remove" is <b>deactivation</b>, not a bare membership delete (task-956; MVP ruling:
      * every member is inside the org, so the only exits are "move to another unit" — which is
      * {@link #move} — and "delete the subject").

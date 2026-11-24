@@ -220,26 +220,15 @@ async function loadSubjects(): Promise<void> {
     subjectLoading.value = true;
     subjectError.value = "";
     try {
-        if (memberKind.value === "agent_principal") {
-            const rows = await api.listAgentPrincipals();
-            // R23：智能体列表契约没有查询参数 ⇒ 拿到可见全集后本地按名称/ID 过滤；
-            // 不做第二套「谁可见」的判定（能看见的才是列表里的，过滤只缩不放）。
-            const needle = subjectQuery.value.trim().toLowerCase();
-            subjectOptions.value = rows
-                .filter(
-                    (row) =>
-                        !needle ||
-                        row.name.toLowerCase().includes(needle) ||
-                        row.principalId.toLowerCase().includes(needle),
-                )
-                .map((row) => ({ id: row.principalId, label: row.name }));
-        } else {
-            const rows = await api.listAdminUsers(subjectQuery.value);
-            subjectOptions.value = rows.map((row) => ({
-                id: row.id,
-                label: row.name || row.username || row.email,
-            }));
-        }
+        const unit = props.unit;
+        if (!unit) return;
+        // task-985：候选判断在服务端（全树未归属 + 未停用），UI 不再取全集后本地过滤。
+        // 已归属主体从候选面消失是本端点的判据，而不是客户端的过滤结果。
+        const rows = await api.listOrgUnitMemberCandidates(unit.id, {
+            memberKind: memberKind.value,
+            q: subjectQuery.value,
+        });
+        subjectOptions.value = rows.map((row) => ({ id: row.memberId, label: row.displayName }));
         // 只合并、不清空：跨查询保留已选项，标签记在本地。
         for (const row of subjectOptions.value) subjectLabels.value[row.id] = row.label;
     } catch (cause) {

@@ -7172,6 +7172,41 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN — a member without READ_ORG_UNIT_MEMBERS, or a unit outside the caller''s subtree', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'ORG_UNIT_NOT_FOUND — no visibility (non-member) or an unknown unit id', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/org-units/{unitId}/member-candidates:
+    get:
+      tags: [admin]
+      operationId: listOrgUnitMemberCandidates
+      summary: List subjects that may be added to an org unit (unassigned only)
+      security: [{ bearerAuth: [] }]
+      description: |
+        task-985. The "add a member" picker. Candidate judgement is **server-side** and whole-tree:
+        a subject is offered only when it belongs to **no unit at all**, and disabled/deleted
+        subjects are excluded because the member write face (`move`) would refuse them. The
+        invariant is `candidates ∩ members(whole tree) == ∅` — "not in this unit" is not enough:
+        a subject sitting in a descendant or sibling unit moves through `PUT …/members/{memberId}`
+        instead, and offering it here would let one person be added twice.
+
+        A client must **not** fetch a broader user/principal directory and filter it itself; that
+        reproduces exactly the bug this face replaces (a list face that forgets the whole-tree
+        rule the moment it is reused). `q` only narrows the set (case-insensitive display-name
+        search, `%`/`_` escaped), never widens it.
+
+        Gates reuse the member write face's order: **scope first** (a caller with no membership
+        row and no instance-scope `MANAGE_ORG_UNIT_MEMBERS` gets `404 ORG_UNIT_NOT_FOUND` for any
+        unit id, existing or not — no existence leak), **then** the atom (`403 FORBIDDEN`), **then**
+        the unit must be inside the caller's subtree (`403 FORBIDDEN`). The atom is
+        `MANAGE_ORG_UNIT_MEMBERS`, not `READ_ORG_UNIT_MEMBERS`: this picker exists only to feed a
+        write, and a read-only member has no business enumerating unassigned subjects.
+      parameters:
+        - { in: path, name: unitId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: memberKind, required: true, schema: { type: string, enum: [human, agent_principal] }, description: 'Which subject table to query. The response rows carry the same value back (M3-2: both subject kinds share the member table).' }
+        - { in: query, name: q, required: false, schema: { type: string, maxLength: 120 }, description: 'Case-insensitive display-name search; only narrows the candidate set. Blank/absent ⇒ all unassigned candidates.' }
+      responses:
+        '200': { description: Unassigned subjects, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitMemberCandidateListResponse' } } } }
+        '400': { description: 'INVALID_MEMBER_KIND or INVALID_ORG_UNIT_ID', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — a member without MANAGE_ORG_UNIT_MEMBERS, or a unit outside the caller''s subtree', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'ORG_UNIT_NOT_FOUND — no visibility (non-member) or an unknown unit id', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/org-units/{unitId}:
     patch:
       tags: [admin]
@@ -7418,6 +7453,20 @@ components:
       required: [members]
       properties:
         members: { type: array, items: { $ref: '#/components/schemas/OrgUnitMemberView' } }
+    OrgUnitMemberCandidateView:
+      type: object
+      additionalProperties: false
+      required: [memberKind, memberId, displayName]
+      properties:
+        memberKind: { type: string, enum: [human, agent_principal], description: 'The subject table the row came from; echoed so a client can merge one picker without sniffing the id.' }
+        memberId: { type: string, format: uuid }
+        displayName: { type: string, description: 'Human: users.username (email when blank); agent principal: agent_principals.name. Never null here — a disabled subject is not a candidate.' }
+    OrgUnitMemberCandidateListResponse:
+      type: object
+      additionalProperties: false
+      required: [candidates]
+      properties:
+        candidates: { type: array, items: { $ref: '#/components/schemas/OrgUnitMemberCandidateView' } }
     OrgUnitCreateRequest:
       type: object
       additionalProperties: false

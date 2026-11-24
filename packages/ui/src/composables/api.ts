@@ -277,6 +277,18 @@ export interface ApiOrgUnitMember {
 }
 
 /**
+ * task-985：`GET /api/v1/org-units/{unitId}/member-candidates` 的一行。
+ *
+ * <p>候选判断在服务端（`findUnassignedCandidates`，全树 `NOT EXISTS`）：已归属/停用主体不会出现。
+ * UI **不得**先取全量用户/智能体再本地过滤 —— 那正是本端点要替掉的旧路径。</p>
+ */
+export interface ApiOrgUnitMemberCandidate {
+    memberKind: "human" | "agent_principal";
+    memberId: string;
+    displayName: string;
+}
+
+/**
  * task-136 J1：`POST /org-units` 的 201 体（openapi `OrgUnitCreatedResponse`）。
  * `path` 是服务端算的点分 id 链 —— UI 不自己拼（拼了就是一份会过期的副本）。
  */
@@ -5866,6 +5878,22 @@ export const api = {
             `/org-units/${encodeURIComponent(unitId)}/members${suffix}`,
         );
         return data.members;
+    },
+
+    /**
+     * task-985："加成员"选择器的服务端候选面。`memberKind` 必填；`q` 只缩不放（服务端
+     * display-name ILIKE）。已归属（全树任意单元）与停用主体由服务端排除，UI 不做第二套判定。
+     */
+    async listOrgUnitMemberCandidates(
+        unitId: string,
+        opts: { memberKind: ApiOrgUnitMember["memberKind"]; q?: string },
+    ): Promise<ApiOrgUnitMemberCandidate[]> {
+        const search = new URLSearchParams({ memberKind: opts.memberKind });
+        if (opts.q && opts.q.trim()) search.set("q", opts.q.trim());
+        const data = await apiGet<{ candidates: ApiOrgUnitMemberCandidate[] }>(
+            `/org-units/${encodeURIComponent(unitId)}/member-candidates?${search.toString()}`,
+        );
+        return data.candidates;
     },
 
     /**

@@ -28,6 +28,15 @@ public final class OrgUnitWireView {
     public record Member(String memberKind, UUID memberId, UUID orgUnitId, String displayName) {}
 
     public record MemberList(List<Member> members) {}
+
+    /**
+     * task-985: one row of the "add a member" candidate picker. Deliberately no {@code orgUnitId}:
+     * a candidate by definition belongs to no unit, and carrying a field the server never fills
+     * would invite a client to read absence as "somewhere else".
+     */
+    public record MemberCandidate(String memberKind, UUID memberId, String displayName) {}
+
+    public record MemberCandidateList(List<MemberCandidate> candidates) {}
     /**
      * G1 (M2-10b): the move response. {@code affectedWorkspaceIds} is <b>always present</b> — an
      * empty array is a real answer (no workspace is affected), and a client that branches on
