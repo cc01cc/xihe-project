@@ -16,7 +16,7 @@ import type * as apiModule from "../../../../composables/api";
 import { toast } from "vue-sonner";
 import { useAgentStore } from "../../../../stores/agent";
 import { useChatStore } from "../stores/chat.ts";
-import type { ApprovalRequest, SessionDerivedStateResponse } from "../../../../types";
+import type { ApprovalRequest, Message, SessionDerivedStateResponse } from "../../../../types";
 
 vi.mock("vue-sonner", () => ({
     toast: {
@@ -1691,6 +1691,75 @@ describe("task-29 首条消息后重读会话标题（零刷新）", () => {
         // 失败后也不重试：重试判据（发送前无消息）在乐观消息入表后已不成立。
         await emitSend(wrapper);
         expect(api.getSession, "重读按会话至多一次").toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+});
+
+describe("task-1025 · 失败发送指名连接与模型（F18 前半）", () => {
+    const FAILED_MESSAGE_ID = "99999999-9999-4999-8999-999999999999";
+    const TARGET = '[data-testid="chat-failed-send-target"]';
+
+    async function mountWithFailedSend(extra: Record<string, unknown> = {}) {
+        const wrapper = mountPanel();
+        await flushPromises();
+        useChatStore().addMessage(SESSION_ID, {
+            id: FAILED_MESSAGE_ID,
+            sessionId: SESSION_ID,
+            role: "user",
+            content: "hello",
+            timestamp: "2026-11-24T23:00:00Z",
+            runStatus: "failed",
+            errorCode: "LLM_NOT_CONFIGURED",
+            ...extra,
+        } as Message);
+        await flushPromises();
+        return wrapper;
+    }
+
+    it("失败消息自带连接与模型时，错误条点名二者（不被会话行覆盖）", async () => {
+        const wrapper = await mountWithFailedSend({
+            providerConnectionId: "conn-abcdef123456",
+            modelName: "deepseek-chat",
+        });
+
+        const line = wrapper.get(TARGET).text();
+        expect(line).toContain("123456");
+        expect(line).toContain("deepseek-chat");
+        // 会话行夹具是 conn-1 / deepseek-flash；消息侧字段优先，不得展示会话行的值。
+        expect(line).not.toContain("conn-1");
+        expect(line).not.toContain("deepseek-flash");
+        wrapper.unmount();
+    });
+
+    it("失败消息缺连接字段时回落到会话行，仍点名连接与模型", async () => {
+        const wrapper = await mountWithFailedSend();
+
+        const line = wrapper.get(TARGET).text();
+        expect(line).toContain("conn-1");
+        expect(line).toContain("deepseek-flash");
+        wrapper.unmount();
+    });
+
+    it("连接与模型都取不到时整行不渲染（不写「未知」）", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        const row = useSessionStore().sessions.find((item) => item.id === SESSION_ID)!;
+        row.providerConnectionId = undefined;
+        row.modelName = undefined;
+        useChatStore().addMessage(SESSION_ID, {
+            id: FAILED_MESSAGE_ID,
+            sessionId: SESSION_ID,
+            role: "user",
+            content: "hello",
+            timestamp: "2026-11-24T23:00:00Z",
+            runStatus: "failed",
+            errorCode: "LLM_NOT_CONFIGURED",
+        } as Message);
+        await nextTick();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="chat-failed-send"]').exists()).toBe(true);
+        expect(wrapper.find(TARGET).exists()).toBe(false);
         wrapper.unmount();
     });
 });

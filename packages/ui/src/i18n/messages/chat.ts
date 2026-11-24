@@ -185,6 +185,7 @@ export const messages = {
             // PLAN-0663 M2/T2.1：审批过期是终态——弹窗关闭，用非模态提示告知（不再要求用户点）。
             approvalExpiredNotice: "这条审批已过期，已自动关闭；如需继续请重新发起。",
             providerAutoBound: "已自动绑定",
+            failedSendTarget: "连接：{connection} · 模型：{model}",
             providerBindingGuideTitle: "会话尚未绑定模型",
             providerBindingGuideProviderRequired:
                 "这个会话还没有绑定 provider 连接，CP 会拒绝发送。可以尝试按智能体默认模型 / 生效配置自动绑定，或前往设置手动选择。",
@@ -822,6 +823,7 @@ export const messages = {
             approvalExpiredNotice:
                 "This approval request expired and was closed automatically; start it again if you still need it.",
             providerAutoBound: "Auto-bound",
+            failedSendTarget: "Connection: {connection} · Model: {model}",
             providerBindingGuideTitle: "This session has no model binding",
             providerBindingGuideProviderRequired:
                 "This session has no provider connection, so the server refuses to send. Try auto-binding from the agent default model / effective profile, or pick one in Settings.",

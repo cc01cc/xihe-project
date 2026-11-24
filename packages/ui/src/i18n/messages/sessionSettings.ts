@@ -18,6 +18,7 @@ export const messages = {
             tierOverride: "会话覆盖：{tier}",
             tierNoPermission: "无权限修改：{reason}",
             tierNoWorkspaceDefault: "继承中 · 工作区未设默认值",
+            tierAgentDefaultReadOnly: "Agent 默认只读，可在此调整",
             tierUnsupported: "{tier}（工作区不支持）",
             tierUnsupportedHint: "该工作区以 MXC 收容方式运行，最高只能到「工作区内修改」。",
             tierReasonViewer: "工作区只读",
@@ -43,6 +44,7 @@ export const messages = {
             tierOverride: "Session override: {tier}",
             tierNoPermission: "Cannot change: {reason}",
             tierNoWorkspaceDefault: "Inherited · no workspace default",
+            tierAgentDefaultReadOnly: "The agent is view-only by default; adjust it here",
             tierUnsupported: "{tier} (not supported here)",
             tierUnsupportedHint:
                 "This workspace runs in MXC containment, so the highest tier is Workspace edits.",

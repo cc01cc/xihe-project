@@ -232,6 +232,32 @@ const failedSendPresentation = computed<ErrorPresentation | null>(() => {
     );
 });
 
+/** task-1025：失败 Run 的连接/模型标识。消息侧字段优先（未来投影），缺失时回落到会话行。 */
+interface FailedSendModelRef {
+    providerConnectionId?: string | null;
+    modelName?: string | null;
+}
+
+const failedSendTarget = computed<{ connection: string; model: string } | null>(() => {
+    const notice = failedSendNotice.value;
+    if (!notice) return null;
+    const messageRef = notice as unknown as FailedSendModelRef;
+    const session = sessionStore.sessions.find((item) => item.id === props.sessionId);
+    const connectionId = (
+        messageRef.providerConnectionId ??
+        session?.providerConnectionId ??
+        ""
+    ).trim();
+    const modelName = (messageRef.modelName ?? session?.modelName ?? "").trim();
+    // 取不全就整行不渲染：不写「未知」，也不猜一个占位值。
+    if (!connectionId || !modelName) return null;
+    const connection = configStore.providerConnections.find((item) => item.id === connectionId);
+    return {
+        connection: (connection?.label ?? "").trim() || connectionId.slice(-6),
+        model: modelName,
+    };
+});
+
 // PLAN-0670 M2d.3：超过 500 条时从最旧端丢弃并累计"已折叠"计数（显式呈现，不静默丢）。
 // 丢弃造成的 scrollHeight 变化由 MessageList 的 captureAnchor/restoreAnchor 补偿。
 // PLAN-0760：双计数（N=最近段 500 + M=已展开段 ≤1500）。
@@ -1833,6 +1859,19 @@ watch(
                     {{ t("common.retry") }}
                 </button>
             </div>
+            <!-- task-1025：错误必须指名「哪条连接 / 哪个模型」，否则同名 Provider 下用户无法判断该补哪条。 -->
+            <p
+                v-if="failedSendTarget"
+                data-testid="chat-failed-send-target"
+                class="mt-1 text-[11px] text-muted-foreground"
+            >
+                {{
+                    t("chat.failedSendTarget", {
+                        connection: failedSendTarget.connection,
+                        model: failedSendTarget.model,
+                    })
+                }}
+            </p>
             <Collapsible v-if="failedSendPresentation.technicalDetail">
                 <CollapsibleTrigger as-child>
                     <button

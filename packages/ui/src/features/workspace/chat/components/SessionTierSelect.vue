@@ -89,14 +89,30 @@ const readonlyText = computed(() => {
 const triggerLabel = computed(() => (tier.value ? t(LABEL_KEYS[tier.value]) : null));
 const errorMessage = computed(() => state.value?.error ?? null);
 
+/**
+ * task-1025（F22）：继承型（工作区默认 / 无默认值）且工作区没设默认值 ⇒ 必须说清
+ * 「这个档位是哪来的」，并在落到最严档时点明「Agent 默认只读，可在此调整」，
+ * 避免 OWNER 把「仅可查看 · 继承中」误判成权限故障。
+ */
+const inheritsWithoutDefault = computed(
+    () =>
+        Boolean(state.value?.loaded) &&
+        state.value?.source !== "session" &&
+        state.value?.workspaceTier === null,
+);
+const fallbackHintText = computed<string | null>(() => {
+    if (!inheritsWithoutDefault.value) return null;
+    const parts = [t("sessionSettings.tierNoWorkspaceDefault")];
+    if (tier.value === "view") parts.push(t("sessionSettings.tierAgentDefaultReadOnly"));
+    return parts.join(" · ");
+});
+
 /** compact：四段常显说明压成一句（只读原因 → 越层 → 无工作区回落 → 错误），全空则不渲染提示节点。 */
 const compactHintText = computed<string | null>(() => {
     const parts: string[] = [];
     if (readonlyText.value) parts.push(readonlyText.value);
     if (unsupported.value.length) parts.push(t("sessionSettings.tierUnsupportedHint"));
-    if (state.value?.source === "none" && state.value?.loaded) {
-        parts.push(t("sessionSettings.tierNoWorkspaceDefault"));
-    }
+    if (fallbackHintText.value) parts.push(fallbackHintText.value);
     if (errorMessage.value) parts.push(errorMessage.value);
     return parts.length ? parts.join(" · ") : null;
 });
@@ -105,6 +121,12 @@ const triggerId = computed(() =>
     props.compact ? undefined : `session-tier-select-${props.sessionId}`,
 );
 const hintId = computed(() => `composer-tier-chip-hint-${props.sessionId}`);
+const fallbackHintId = computed(() => `session-tier-fallback-${props.sessionId}`);
+/** 触发按钮的可访问描述：compact 走 sr-only 提示，面板走常显回落说明。 */
+const describedBy = computed(() => {
+    if (props.compact) return compactHintText.value ? hintId.value : undefined;
+    return fallbackHintText.value ? fallbackHintId.value : undefined;
+});
 const triggerClass = computed(() =>
     props.compact
         ? "h-7 max-w-32 min-w-0 truncate rounded-md border bg-background px-1.5 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
@@ -139,7 +161,7 @@ async function handleChange(value: unknown): Promise<void> {
                 :data-testid="compact ? 'composer-tier-chip' : 'session-tier-select'"
                 :class="triggerClass"
                 :aria-label="t('sessionSettings.tierLabel')"
-                :aria-describedby="compact && compactHintText ? hintId : undefined"
+                :aria-describedby="describedBy"
                 :title="readonlyText ?? triggerLabel ?? t('sessionSettings.tierLabel')"
             >
                 <SelectValue :placeholder="t('sessionSettings.tierLabel')" />
@@ -181,11 +203,12 @@ async function handleChange(value: unknown): Promise<void> {
         </p>
         <!-- 无工作区默认值 ⇒ 回落最严档，且必须说出来（不静默降级，D-1908 一）。 -->
         <p
-            v-if="!compact && state?.source === 'none' && state?.loaded"
+            v-if="!compact && fallbackHintText"
+            :id="fallbackHintId"
             data-testid="session-tier-fallback"
             class="mt-1 line-clamp-2 text-xs text-amber-800 dark:text-amber-300"
         >
-            {{ t("sessionSettings.tierNoWorkspaceDefault") }}
+            {{ fallbackHintText }}
         </p>
         <p
             v-if="!compact && errorMessage"
