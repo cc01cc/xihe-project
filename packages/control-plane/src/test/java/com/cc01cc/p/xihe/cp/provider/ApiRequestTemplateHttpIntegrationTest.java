@@ -112,18 +112,21 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
                 "every chat apiType (incl. PLAN-0624 dashscope-generation) ships a built-in template");
         assertTrue(definitions.toString().contains("dashscope-multimodal-embedding"),
                 "task-965: the embedding apiType ships a built-in template too");
-        // PLAN-0632 G-0: v1 must stay slot-free, v2 must carry both slots, and every seeded body must
-        // pass the independent publish validator — a seed nobody can publish would only surface as a
-        // 400 for whoever pinned it. task-965: non-chat seeds are library-only (requireChat still
-        // rejects them from Sessions), so only chat seeds are expected to pass the chat validator.
+        // PLAN-0632 G-0: v1 must stay slot-free, chat v2 must carry both slots, and every seeded body
+        // must pass the independent publish validator — a seed nobody can publish would only surface as
+        // a 400 for whoever pinned it. task-965: non-chat seeds are library-only (requireChat still
+        // rejects them from Sessions) and have no conversation/context blocks, so their v2 keeps the
+        // v1 wire shape (see ApiRequestTemplateService.contextBody) and only chat seeds pass the
+        // chat validator.
         java.util.Map<String, Integer> revisionsSeen = new java.util.HashMap<>();
         for (JsonNode definition : definitions) {
             String type = definition.path("apiTypeId").asText();
             int apiTypeVersion = definition.path("apiTypeVersion").asInt();
             int revision = definition.path("version").asInt();
             String bodySource = definition.path("bodySource").asText();
+            String operation = apiTypeOperation(type, apiTypeVersion);
             revisionsSeen.merge(type, 1, Integer::sum);
-            if ("chat".equals(apiTypeOperation(type, apiTypeVersion))) {
+            if ("chat".equals(operation)) {
                 assertTrue(apiRequestValidator.validate(type, apiTypeVersion, bodySource).valid(),
                         "built-in seed must be publishable: " + type + "@" + apiTypeVersion + " v" + revision);
             }
@@ -132,8 +135,17 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
                         "revision 1 is frozen: it must never gain the G-0 slots");
             } else {
                 assertEquals(2, revision, "only revisions 1 and 2 exist for a built-in template");
-                assertTrue(bodySource.contains("${xh.skill_catalog}") && bodySource.contains("${xh.agent_memory}"),
-                        "revision 2 seeds both context-block slots");
+                if ("chat".equals(operation)) {
+                    assertTrue(bodySource.contains("${xh.skill_catalog}") && bodySource.contains("${xh.agent_memory}"),
+                            "revision 2 of a chat seed seeds both context-block slots: "
+                                    + type + "@" + apiTypeVersion);
+                } else {
+                    // task-965 widened built-ins to every apiType, but an embedding request has no
+                    // instruction block: revision 2 intentionally shares the v1 wire shape, so a
+                    // context slot here would be a seed regression rather than a missing feature.
+                    assertFalse(bodySource.contains("${xh.skill_catalog}") || bodySource.contains("${xh.agent_memory}"),
+                            "revision 2 of a non-chat seed must stay slot-free: " + type + "@" + apiTypeVersion);
+                }
             }
         }
         revisionsSeen.values().forEach(count -> assertEquals(2, count, "each apiType ships v1 + v2"));
