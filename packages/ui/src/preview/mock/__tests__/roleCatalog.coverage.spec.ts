@@ -12,9 +12,11 @@ import { deriveRoleCatalog, mockRoleCatalog, ROLE_CATALOG_SOURCES } from "../dat
  * <p><b>为什么要这道门</b>：这条面此前在 mock 车道是 404，角色页整页渲染成「该页面需要的服务端能力
  * 还没提供」；补夹具最容易踩的坑是**手抄一份原子表** —— 那既不会红也不会绿，只会让页面看起来正常而
  * 少了几个选项（\`D-1485\` 的「第二份清单」）。所以本门判的不是「形状对不对」，而是
- * 「**这 46 个名字是不是 CP 真会认的那些**」（task-188 MVP⑤ S2 起 40→41、task-108 起 41→42
- * action atoms，新增 TEAM_TASK_MANAGE / session:permission:configure；task-835 起 42→43
- * action atoms，新增 `action:approve` —— 夹具从 CP 源码派生、本数随 CP 词汇表同批刷新）。</p>
+ * 「**这些名字是不是 CP 真会认的那些**」。原子**个数不在本文件写死**（task-1045）：同一条门
+ * 历史上红过四次、每次都靠人肉改数 —— 40→41（task-188 MVP⑤ S2 `TEAM_TASK_MANAGE`）、
+ * 41→42（task-108 `session:permission:configure`）、42→43（task-835 `action:approve`）、
+ * 43→44（task-935 / D-1935 `action:clone`）。根因是**人肉同步常量**而非某次疏忽，所以数量一律
+ * 从 CP 源码派生（与 task-186 把写死的 8 改成 `SYSTEM_PRESET_NAMES.length` 同一口径）。</p>
  *
  * <p><b>判据分四层，每层都能红</b>：</p>
  * <ol>
@@ -29,13 +31,14 @@ import { deriveRoleCatalog, mockRoleCatalog, ROLE_CATALOG_SOURCES } from "../dat
  *       与 \`presetSeeds()\` 的预设名，和 mock 的 \`scopeClass\` / \`agentPrincipalForbidden\` /
  *       \`defaultGrants\` 比**集合相等**。派生代码与判据各算一次、走不同路径 ⇒ 派生错位会露出来
  *       （同源同法只能证明自己和自己一致）。</li>
- *   <li><b>接线</b>：走真实中间件打 \`GET /presets/catalog\` 拿 200 + 46 原子；\`locale=en-US\` 拿英文
+ *   <li><b>接线</b>：走真实中间件打 \`GET /presets/catalog\` 拿 200 + 全量原子；\`locale=en-US\` 拿英文
  *       文案（CP 两侧都有，不需要猜）；**写面仍然是 404** \`MOCK_ENDPOINT_MISSING\`
  *       （\`POST /presets\` / \`PATCH /presets/{id}\`）—— 这是有意留的边界，不是缺口。</li>
  * </ol>
  *
- * <p><b>反空集前提</b>：读不到 CP 源码时**抛**（不是 skip）；词汇表大小 &gt; 20 且
- * \`builtinActionClasses()\` 签名找得到，否则「每条都在词汇表里」是空集上的全称断言，恒真。</p>
+ * <p><b>反空集前提</b>（派生计数成立的前提，删了就把「写死数字」换成「0 == 0」）：读不到 CP 源码时
+ * **抛**（不是 skip）；词汇表大小 &gt; 20、能力常量非空，且 \`builtinActionClasses()\` 签名找得到，
+ * 否则「每条都在词汇表里」是空集上的全称断言，恒真。</p>
  */
 
 const CP_POLICY_DIR = resolve(
@@ -219,6 +222,17 @@ const CATALOG_EN = mockRoleCatalog("en-US");
 const actionAtoms = CATALOG.atoms.filter((atom) => !atom.capability);
 const capabilityAtoms = CATALOG.atoms.filter((atom) => atom.capability);
 
+/**
+ * CP 应提供的原子总数（task-1045：派生，不在本文件写死 46）。
+ *
+ * <p>两个加数**各走一条独立读取路径**：动作原子取 `ToolFaceRegistry.builtinActionClasses()`
+ * 的词汇表，能力原子取独立解析的 `PermissionAtomCatalog.CAPABILITY_ATOM_NAMES`。CP 只在其中
+ * 一处登记新原子（漏加 `builtinActionClasses()`，正是 task-935 修的那类面）⇒ 这里不会静默通过。
+ * 空集退化由「判据前提」那条的 `VOCABULARY.size > 20` 下限挡住（不写死总数 ⇒ 必须有下限，
+ * 否则 0==0 恒真）。</p>
+ */
+const EXPECTED_ATOM_TOTAL = VOCABULARY.size + CAPABILITY_CONSTANTS.length;
+
 interface Captured {
     status: number;
     body: unknown;
@@ -280,16 +294,20 @@ describe("task-84 · /presets/catalog mock 夹具（形状与派生）", () => {
             "CP 的 builtinActionClasses() 签名不在了（改名要同批改这道门）",
         ).toBeGreaterThan(0);
         expect(VOCABULARY.size).toBeGreaterThan(20);
-        // 46 = 43 action + 3 capability 是本卡的读取值：task-188 MVP⑤ S2 加 TEAM_TASK_MANAGE、
-        // task-108 加 session:permission:configure、task-835 加 action:approve
-        // （`ToolFaceRegistry.java:116 ACTION_APPROVE = "approve"`，:432 并入 builtinActionClasses()）。
-        // 写成常量断言，CP 增原子时这里先红。
-        expect(actionAtoms).toHaveLength(43);
-        expect(capabilityAtoms).toHaveLength(3);
-        expect(VOCABULARY.size).toBe(actionAtoms.length);
+        // task-1045：数量不写死（历史四次漏更 40→41→42→43→44 的根因是人肉同步常量）。
+        // 「非空且有下限」由上面两行钉住，这里判的是「mock 与 CP 独立读取的规模一致」——
+        // 动作数对上 `builtinActionClasses()`，能力数对上独立解析的 `CAPABILITY_ATOM_NAMES`。
+        // 「谁等于谁」的逐名双向核对在下一条用例，本条只保证它不是 0==0 的空门。
+        expect(actionAtoms).toHaveLength(VOCABULARY.size);
+        // 能力侧同样要有下限：`CAPABILITY_CONSTANTS` 来自 `values()`（只认已声明的 String 常量），
+        // CP 改声明形态会让它静默变成长度 0 ⇒ 不钉下限则 `EXPECTED_ATOM_TOTAL` 跟着缩水成假绿。
+        expect(CAPABILITY_CONSTANTS.length).toBeGreaterThan(0);
+        expect(capabilityAtoms).toHaveLength(CAPABILITY_CONSTANTS.length);
+        // 总数 = 动作 + 能力，与 `CATALOG.atoms` 对齐（下面两条接线用例复用同一个派生值）。
+        expect(CATALOG.atoms).toHaveLength(EXPECTED_ATOM_TOTAL);
     });
 
-    it("词汇表相等（不漏不多）：mock 的 43 个动作原子 == builtinActionClasses()", () => {
+    it("词汇表相等（不漏不多）：mock 的动作原子集合 == builtinActionClasses()", () => {
         const mockActions = new Set(actionAtoms.map((atom) => atom.name));
         // 两侧都要「相等」：只在一边有用的是另一个方向的漏洞（漏一个不报、多一个也只报一边）。
         for (const name of mockActions) {
@@ -372,7 +390,7 @@ describe("task-84 · /presets/catalog mock 夹具（形状与派生）", () => {
     });
 
     it("defaultGrants：预设集合与 CP presetSeeds() 派生一致 + atoms 是字符串数组（openapi RoleDefaultGrantView）", () => {
-        // task-186：原来写死 toHaveLength(8)，而 CP 已 11 个 PresetSeed（task-116 加了 AGENT_READER /
+        // task-186：原来写死 8 个预设，而 CP 已 11 个 PresetSeed（task-116 加了 AGENT_READER /
         // AGENT_WORKER / WS_RUNNER）⇒ 每加一个角色这道门就红一次，且红在数字上读不出「谁变了」。
         // 改为与 SYSTEM_PRESET_NAMES 比数量：它就是从 SystemGrantPresetCatalog.presetSeeds() 源码派生的
         // 名单（本文件 :174 起），CP 再加角色这条自动跟；下面的 arrayContaining 是给派生器本身的锚。
@@ -432,7 +450,7 @@ describe("task-84 · /presets/catalog mock 夹具（形状与派生）", () => {
 describe("task-84 · /presets/catalog 走真实中间件（接线 + 边界）", () => {
     const handler = mountApiHandler();
 
-    it("GET /presets/catalog?locale=zh-CN ⇒ 200 且 46 原子（此前是 404 MOCK_ENDPOINT_MISSING）", async () => {
+    it("GET /presets/catalog?locale=zh-CN ⇒ 200 且全量原子（此前是 404 MOCK_ENDPOINT_MISSING）", async () => {
         const answer = await call(handler, "/presets/catalog?locale=zh-CN");
         expect(answer.status).toBe(200);
         const body = answer.body as {
@@ -441,8 +459,9 @@ describe("task-84 · /presets/catalog 走真实中间件（接线 + 边界）", 
             defaultGrants: unknown[];
         };
         expect(Array.isArray(body.atoms)).toBe(true);
-        // 46 = 43 action + 3 capability（task-835 新增 action:approve）。
-        expect(body.atoms).toHaveLength(46);
+        // 数量 = CP 独立读取的 `builtinActionClasses()` + `CAPABILITY_ATOM_NAMES`（见 EXPECTED_ATOM_TOTAL）。
+        // task-1045 前这里写死 46，同一条门在 CP 加原子时红过一次、靠人肉改数绿掉。
+        expect(body.atoms).toHaveLength(EXPECTED_ATOM_TOTAL);
         expect(body.scopes).toEqual(["instance", "workspace"]);
         // task-186：同 defaultGrants 那条 —— 数量取 CP 派生的名单长度，不写死。
         expect(body.defaultGrants).toHaveLength(SYSTEM_PRESET_NAMES.length);
@@ -475,7 +494,7 @@ describe("task-84 · /presets/catalog 走真实中间件（接线 + 边界）", 
         expect(zhRead).not.toBe(enRead);
         // 缺省 locale（不传）按 zh-CN。
         const fallback = (await call(handler, "/presets/catalog")).body as { atoms: unknown[] };
-        expect(fallback.atoms).toHaveLength(46);
+        expect(fallback.atoms).toHaveLength(EXPECTED_ATOM_TOTAL);
     });
 
     it("GET /presets 仍是裸数组（预设列表读面不受本次改动影响）", async () => {
