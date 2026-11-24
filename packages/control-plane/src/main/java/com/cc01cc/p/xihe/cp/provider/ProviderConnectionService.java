@@ -44,6 +44,8 @@ public class ProviderConnectionService {
             Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
     private static final java.util.Set<String> MODEL_DISCOVERY_VALUES =
             java.util.Set.of("remote-models", "litellm-catalog", "curated", "manual");
+    private static final String MODEL_DISCOVERY_REMOTE = "remote-models";
+    private static final int MODEL_DISCOVERY_URL_MAX_LENGTH = 2048;
     /** PLAN-0563: display names are short, single-line labels. */
     private static final int LABEL_MAX_CODE_POINTS = 40;
 
@@ -235,6 +237,15 @@ public class ProviderConnectionService {
                 input.modelDiscovery() == null || input.modelDiscovery().isBlank()
                 ? pair.path("modelDiscovery").asText("remote-models")
                 : input.modelDiscovery());
+        String modelDiscoveryUrl = null;
+        String modelDiscoveryUrlIgnoredReason = null;
+        if (input.modelDiscoveryUrl() != null && !input.modelDiscoveryUrl().isBlank()) {
+            if (MODEL_DISCOVERY_REMOTE.equals(modelDiscovery)) {
+                modelDiscoveryUrl = requireModelDiscoveryUrl(input.modelDiscoveryUrl());
+            } else {
+                modelDiscoveryUrlIgnoredReason = ignoredReason(modelDiscovery);
+            }
+        }
         requireUniqueLabel(scope, ownerId, input.providerId(), label, null);
         UUID linkedCredentialId = resolveCredentialLink(apiKey, credentialId, scope, userId,
                 TenantContext.getWorkspaceId(), label);
@@ -253,6 +264,8 @@ public class ProviderConnectionService {
         connection.setEnabled(true);
         connection.setStatus(ProviderConnection.STATUS_VERIFYING);
         connection.setModelDiscovery(modelDiscovery);
+        connection.setModelDiscoveryUrl(modelDiscoveryUrl);
+        connection.setModelDiscoveryUrlIgnoredReason(modelDiscoveryUrlIgnoredReason);
         connection.setManualModels(serializeModels(input.manualModels()));
         ProviderConnection saved = repository.saveAndFlush(connection);
         audit(saved, "CREATED", null, saved.getStatus());
@@ -282,6 +295,25 @@ public class ProviderConnectionService {
         }
         if (input.modelDiscovery() != null && !input.modelDiscovery().isBlank()) {
             connection.setModelDiscovery(requireModelDiscovery(input.modelDiscovery()));
+        }
+        connection.setModelDiscoveryUrlIgnoredReason(null);
+        if (input.modelDiscoveryUrl() != null) {
+            if (input.modelDiscoveryUrl().isBlank()) {
+                if (MODEL_DISCOVERY_REMOTE.equals(connection.getModelDiscovery())) {
+                    connection.setModelDiscoveryUrl(null);
+                } else if (connection.getModelDiscoveryUrl() != null) {
+                    connection.setModelDiscoveryUrlIgnoredReason(
+                            ignoredReason(connection.getModelDiscovery()));
+                }
+            } else if (MODEL_DISCOVERY_REMOTE.equals(connection.getModelDiscovery())) {
+                connection.setModelDiscoveryUrl(requireModelDiscoveryUrl(input.modelDiscoveryUrl()));
+            } else {
+                connection.setModelDiscoveryUrlIgnoredReason(
+                        ignoredReason(connection.getModelDiscovery()));
+            }
+        } else if (!MODEL_DISCOVERY_REMOTE.equals(connection.getModelDiscovery())
+                && connection.getModelDiscoveryUrl() != null) {
+            connection.setModelDiscoveryUrlIgnoredReason(ignoredReason(connection.getModelDiscovery()));
         }
         if (input.manualModels() != null) {
             connection.setManualModels(serializeModels(input.manualModels()));
@@ -358,9 +390,13 @@ public class ProviderConnectionService {
         if (baseUrl == null || baseUrl.isBlank()) {
             return markVerificationFailure(connection, "LLM_PROVIDER_BASE_URL_MISSING", previousStatus);
         }
+        String modelsUrl = MODEL_DISCOVERY_REMOTE.equals(connection.getModelDiscovery())
+                && connection.getModelDiscoveryUrl() != null
+                ? connection.getModelDiscoveryUrl()
+                : baseUrl.replaceAll("/$", "") + "/models";
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl.replaceAll("/$", "") + "/models"))
+                    .uri(URI.create(modelsUrl))
                     .timeout(VERIFY_TIMEOUT)
                     .header("Accept", "application/json")
                     .GET();
@@ -683,6 +719,74 @@ public class ProviderConnectionService {
         return value;
     }
 
+    /**
+     * R17: a supplied URL is absolute and http(s) only. Validation lives here rather than in the
+     * controller so every writer (HTTP, future importers) shares the same rule; the exception
+     * carries the field name the client must fix.
+     */
+    private String requireModelDiscoveryUrl(String value) {
+        String normalized = value.trim();
+        if (normalized.length() > MODEL_DISCOVERY_URL_MAX_LENGTH) {
+            throw new ModelDiscoveryUrlInvalidException(
+                    "modelDiscoveryUrl must be at most 2048 characters");
+        }
+        try {
+            URI uri = URI.create(normalized);
+            String scheme = uri.getScheme();
+            if (scheme == null
+                    || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+                throw new ModelDiscoveryUrlInvalidException(
+                        "modelDiscoveryUrl must use http or https");
+            }
+            if (uri.getHost() == null || uri.getHost().isBlank()) {
+                throw new ModelDiscoveryUrlInvalidException(
+                        "modelDiscoveryUrl must be an absolute URL with a host");
+            }
+        } catch (IllegalArgumentException e) {
+            if (e instanceof ModelDiscoveryUrlInvalidException invalid) {
+                throw invalid;
+            }
+            throw new ModelDiscoveryUrlInvalidException(
+                    "modelDiscoveryUrl must be a valid http(s) URL");
+        }
+        return normalized;
+    }
+
+    private static String ignoredReason(String modelDiscovery) {
+        return "modelDiscoveryUrl is ignored because modelDiscovery is " + modelDiscovery
+                + "; it only applies to remote-models";
+    }
+
+    /** Cross-origin is a warning, never a rejection: same-origin/unknown stay false. */
+    private static boolean isCrossOrigin(String modelDiscovery, String baseUrl, String url) {
+        if (!MODEL_DISCOVERY_REMOTE.equals(modelDiscovery)
+                || url == null || url.isBlank() || baseUrl == null || baseUrl.isBlank()) {
+            return false;
+        }
+        try {
+            String baseOrigin = originOf(URI.create(baseUrl.trim()));
+            String urlOrigin = originOf(URI.create(url.trim()));
+            return baseOrigin != null && urlOrigin != null && !baseOrigin.equals(urlOrigin);
+        } catch (IllegalArgumentException e) {
+            // A malformed stored value must not break the read projection; it simply cannot be
+            // classified as cross-origin.
+            return false;
+        }
+    }
+
+    private static String originOf(URI uri) {
+        String scheme = uri.getScheme() == null ? null : uri.getScheme().toLowerCase(Locale.ROOT);
+        String host = uri.getHost() == null ? null : uri.getHost().toLowerCase(Locale.ROOT);
+        if (scheme == null || host == null) {
+            return null;
+        }
+        int port = uri.getPort();
+        if (port == -1) {
+            port = "https".equals(scheme) ? 443 : 80;
+        }
+        return scheme + "://" + host + ":" + port;
+    }
+
     private String normalizeBaseUrl(String input, JsonNode definition) {
         if (input != null && !input.isBlank()) {
             return input.trim().replaceAll("/$", "");
@@ -928,7 +1032,11 @@ public class ProviderConnectionService {
                 connection.getModelDiscovery(), readManualModels(connection),
                 connection.getCredentialId() == null ? null : connection.getCredentialId().toString(),
                 connection.getMaxInflight(), connection.getMaxQueue(), connection.getWindowTokenBudget(),
-                connection.getWindowSeconds(), modelLimitsOf(connection.getId()));
+                connection.getWindowSeconds(), modelLimitsOf(connection.getId()),
+                connection.getModelDiscoveryUrl(),
+                isCrossOrigin(connection.getModelDiscovery(), connection.getBaseUrl(),
+                        connection.getModelDiscoveryUrl()),
+                connection.getModelDiscoveryUrlIgnoredReason());
     }
 
     /**
@@ -1015,12 +1123,13 @@ public class ProviderConnectionService {
             Integer maxQueue,
             Long windowTokenBudget,
             Integer windowSeconds,
-            List<ModelLimitInput> modelLimits) {
+            List<ModelLimitInput> modelLimits,
+            String modelDiscoveryUrl) {
         public ConnectionInput(String providerId, String label, String scope, String apiKey,
                                String baseUrl, String modelDiscovery, List<String> manualModels,
                                Boolean enabled, String connectionKey) {
             this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels,
-                    enabled, connectionKey, null, null, null, null, null, null);
+                    enabled, connectionKey, null, null, null, null, null, null, null);
         }
 
         /** PLAN-0622 M1.5: {@code modelLimits == null} keeps the rows; any list replaces them. */
@@ -1029,6 +1138,17 @@ public class ProviderConnectionService {
                                Boolean enabled, String connectionKey, String credentialId,
                                Integer maxInflight, Integer maxQueue, Long windowTokenBudget,
                                Integer windowSeconds, List<ModelLimitInput> modelLimits) {
+            this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels, enabled,
+                    connectionKey, credentialId, maxInflight, maxQueue, windowTokenBudget,
+                    windowSeconds, modelLimits, null);
+        }
+
+        public ConnectionInput(String providerId, String label, String scope, String apiKey,
+                               String baseUrl, String modelDiscovery, List<String> manualModels,
+                               Boolean enabled, String connectionKey, String credentialId,
+                               Integer maxInflight, Integer maxQueue, Long windowTokenBudget,
+                               Integer windowSeconds, List<ModelLimitInput> modelLimits,
+                               String modelDiscoveryUrl) {
             this.providerId = providerId;
             this.label = label;
             this.scope = scope;
@@ -1044,13 +1164,14 @@ public class ProviderConnectionService {
             this.windowTokenBudget = windowTokenBudget;
             this.windowSeconds = windowSeconds;
             this.modelLimits = modelLimits;
+            this.modelDiscoveryUrl = modelDiscoveryUrl;
         }
 
         public ConnectionInput(String providerId, String label, String scope, String apiKey,
                                String baseUrl, String modelDiscovery, List<String> manualModels,
                                Boolean enabled, String connectionKey, String credentialId) {
             this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels, enabled,
-                    connectionKey, credentialId, null, null, null, null, null);
+                    connectionKey, credentialId, null, null, null, null, null, null);
         }
 
         /**
@@ -1059,7 +1180,8 @@ public class ProviderConnectionService {
          */
         public boolean hasChanges() {
             return label != null || apiKey != null || credentialId != null || baseUrl != null
-                    || modelDiscovery != null || manualModels != null || enabled != null;
+                    || modelDiscovery != null || modelDiscoveryUrl != null
+                    || manualModels != null || enabled != null;
         }
 
         /** Any limit dimension supplied (scalar or model list) means the caller wants them written. */
@@ -1094,7 +1216,10 @@ public class ProviderConnectionService {
             Integer maxQueue,
             Long windowTokenBudget,
             Integer windowSeconds,
-            List<ModelLimitView> modelLimits) {}
+            List<ModelLimitView> modelLimits,
+            String modelDiscoveryUrl,
+            boolean modelDiscoveryUrlCrossOrigin,
+            String modelDiscoveryUrlIgnoredReason) {}
 
     /** PLAN-0622 M1.5: one per-model limit override as accepted on PATCH. */
     public record ModelLimitInput(String provider, String model, Integer maxInflight,
@@ -1111,6 +1236,11 @@ public class ProviderConnectionService {
     /** PLAN-0555: label validation failure (empty or too long). */
     public static final class LabelInvalidException extends IllegalArgumentException {
         public LabelInvalidException(String message) { super(message); }
+    }
+
+    /** R17: modelDiscoveryUrl is not an absolute http(s) URL. */
+    public static final class ModelDiscoveryUrlInvalidException extends IllegalArgumentException {
+        public ModelDiscoveryUrlInvalidException(String message) { super(message); }
     }
 
     /** PLAN-0555: duplicate display name inside one owner + provider. */

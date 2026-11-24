@@ -70,6 +70,11 @@ public class ProviderConnectionController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID", e.getMessage(),
                     Map.of("field", "label"));
+        } catch (ProviderConnectionService.ModelDiscoveryUrlInvalidException e) {
+            logger.warn("Provider connection create rejected errorCode={}", e.getMessage());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID", e.getMessage(),
+                    Map.of("field", "modelDiscoveryUrl"));
         } catch (IllegalArgumentException e) {
             if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
                 throw domainFailure;
@@ -118,6 +123,12 @@ public class ProviderConnectionController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID", e.getMessage(),
                     Map.of("field", "label"));
+        } catch (ProviderConnectionService.ModelDiscoveryUrlInvalidException e) {
+            logger.warn("Provider connection update rejected connectionId={} errorCode={}",
+                    connectionId, e.getMessage());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID", e.getMessage(),
+                    Map.of("field", "modelDiscoveryUrl"));
         } catch (IllegalArgumentException e) {
             if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
                 throw domainFailure;
@@ -245,13 +256,14 @@ public class ProviderConnectionController {
             Integer maxQueue,
             Long windowTokenBudget,
             Integer windowSeconds,
-            JsonNode modelLimits) {
+            JsonNode modelLimits,
+            String modelDiscoveryUrl) {
         public ConnectionRequest(String providerId, String label, String scope, String apiKey, String baseUrl,
                                   String modelDiscovery, List<String> manualModels, Boolean enabled,
                                   JsonNode connectionKey, JsonNode apiTypeId, JsonNode apiTypeVersion, JsonNode operation) {
             this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels, enabled,
                     connectionKey, apiTypeId, apiTypeVersion, operation, null, null, null, null,
-                    null, null, null, null, null);
+                    null, null, null, null, null, null);
         }
 
         String typeId() {
@@ -331,7 +343,7 @@ public class ProviderConnectionController {
             return new ProviderConnectionService.ConnectionInput(
                     providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels,
                     enabled, key, credentialId, maxInflight, maxQueue, windowTokenBudget, windowSeconds,
-                    parsedModelLimits());
+                    parsedModelLimits(), modelDiscoveryUrl);
         }
     }
 }

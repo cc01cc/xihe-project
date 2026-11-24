@@ -9667,6 +9667,9 @@ components:
           credentialId: { type: [string, 'null'], format: uuid, readOnly: true, description: 'PLAN-0553: owner-neutral reference into the credential vault; null means no key. A USER/WORKSPACE connection links the credential of its owner; an INSTANCE connection links a USER lease-tier credential of the admin who created it, and every consumer resolves that secret server-side through short-lived leases (it is never returned). Credentials themselves stay USER/WORKSPACE-owned: there is no INSTANCE credential ownership.' }
           maskedKey: { type: [string, 'null'], readOnly: true, description: 'Always null; ordinary reads never derive a credential suffix.' }
           modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual] }
+          modelDiscoveryUrl: { type: [string, 'null'], format: uri, maxLength: 2048, description: 'R17: optional absolute http(s) model-list URL. Only consulted when modelDiscovery is remote-models; null/absent falls back to {baseUrl}/models. Non-http(s) values are rejected with 400 and field=modelDiscoveryUrl.' }
+          modelDiscoveryUrlCrossOrigin: { type: boolean, readOnly: true, description: 'R17: true when the stored modelDiscoveryUrl has a different origin than baseUrl (warning only, never a rejection). false when modelDiscoveryUrl is null or modelDiscovery is not remote-models.' }
+          modelDiscoveryUrlIgnoredReason: { type: [string, 'null'], readOnly: true, description: 'R17: set on a write where modelDiscoveryUrl cannot take effect because modelDiscovery is not remote-models; null otherwise.' }
           manualModels: { type: array, items: { type: string } }
           enabled: { type: boolean }
           status: { type: string, enum: [UNVERIFIED, VERIFYING, READY, INVALID_CREDENTIALS, UNREACHABLE, DISABLED] }
@@ -9692,6 +9695,8 @@ components:
          credentialId: { type: [string, 'null'], format: uuid, description: 'Links an existing credential the caller may use; mutually exclusive with apiKey. For scope=INSTANCE it must be a credential the admin caller may use (their own USER lease-tier credential); the shared connection leases it server-side for every consumer and the credential row stays visible only to its owner.' }
          baseUrl: { type: [string, 'null'], format: uri }
          modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
+         modelDiscoveryUrl: { type: [string, 'null'], format: uri, maxLength: 2048, description: 'R17: optional absolute http(s) model-list URL; ignored (with modelDiscoveryUrlIgnoredReason echoed) unless modelDiscovery is remote-models. Invalid scheme/host/length is 400 with field=modelDiscoveryUrl.' }
+         modelDiscoveryUrlCrossOrigin: { type: boolean, readOnly: true, description: 'Response-only echo of the cross-origin warning; requests cannot set it.' }
          manualModels: { type: array, items: { type: string }, maxItems: 256 }
     ApiRequestTemplateRef: { type: object, additionalProperties: false, required: [layer, templateId, version], properties: { layer: { type: string, enum: [instance, user, workspace, workspace-default] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1 } } }
     ApiRequestTemplate: { type: object, required: [id, version, name, apiTypeId, apiTypeVersion, bodySource, status], properties: { id: { type: string, format: uuid }, version: { type: integer, minimum: 1 }, name: { type: string }, description: { type: string }, apiTypeId: { type: string }, apiTypeVersion: { type: integer, minimum: 1 }, bodySource: { type: string, description: 'Strict JSON provider body. Only ${xh.*} slots declared in spec/fixtures/xh-variables.json are legal; substitution is single-pass and $${...} emits a literal. PLAN-0632 Gate G-0 slots: user_input, agent_instructions, skill_catalog, agent_memory, model ($.model only), rag_context (RAG data-role positions only), tools and conversation_history (structural splice only). An undeclared variable is rejected at publish and again at render time; it is never rendered as an empty string. Adding a slot requires changing both sides plus that fixture.' }, status: { type: string, enum: [draft, published] } } }
@@ -9716,6 +9721,8 @@ components:
          baseUrl: { type: [string, 'null'], format: uri }
          enabled: { type: boolean }
          modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
+         modelDiscoveryUrl: { type: [string, 'null'], format: uri, maxLength: 2048, description: 'R17: optional absolute http(s) model-list URL. Omitted preserves the stored value; empty string clears it in remote-models mode; ignored (with modelDiscoveryUrlIgnoredReason echoed) when modelDiscovery is not remote-models. Invalid scheme/host/length is 400 with field=modelDiscoveryUrl.' }
+         modelDiscoveryUrlCrossOrigin: { type: boolean, readOnly: true, description: 'Response-only echo of the cross-origin warning; requests cannot set it.' }
          manualModels: { type: array, items: { type: string }, maxItems: 256 }
          maxInflight: { type: [integer, 'null'], minimum: 1, description: 'PLAN-0622: concurrent lease ceiling; null clears the limit.' }
          maxQueue: { type: [integer, 'null'], minimum: 0, description: 'PLAN-0622: reserved queue depth; null clears it.' }

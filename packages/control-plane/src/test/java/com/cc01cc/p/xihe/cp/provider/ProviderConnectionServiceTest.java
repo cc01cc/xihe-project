@@ -11,10 +11,12 @@ import com.cc01cc.p.xihe.cp.repository.ProviderConnectionAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.net.InetSocketAddress;
 import java.util.List;
 import java.time.Instant;
 import java.util.Map;
@@ -815,5 +817,196 @@ class ProviderConnectionServiceTest {
 
         assertEquals("apiKey and credentialId are mutually exclusive", error.getMessage());
         verify(credentialService, never()).create(any(), anyString());
+    }
+
+    // ------------------------------------------------------------------
+    // task-975 (R17): connection-level model discovery URL
+    // ------------------------------------------------------------------
+
+    private ProviderConnectionService.ConnectionInput modelUrlInput(
+            String modelDiscovery, String modelDiscoveryUrl) {
+        return new ProviderConnectionService.ConnectionInput(
+                "deepseek", "Model URL", "USER", "sk-test-key", "https://api.deepseek.com/v1",
+                modelDiscovery, List.of(), null, "model-url", null, null, null, null, null, null,
+                modelDiscoveryUrl);
+    }
+
+    @Test
+    void createStoresModelDiscoveryUrlAndFlagsCrossOrigin() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForCreate();
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                "USER", "user-1", "deepseek", "model-url")).thenReturn(Optional.empty());
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderId(
+                "USER", "user-1", "deepseek")).thenReturn(List.of());
+
+        ProviderConnection created = service.create(
+                modelUrlInput("remote-models", "https://models.example.com/list"));
+
+        assertEquals("https://models.example.com/list", created.getModelDiscoveryUrl());
+        var view = service.view(created);
+        assertEquals("https://models.example.com/list", view.modelDiscoveryUrl());
+        assertTrue(view.modelDiscoveryUrlCrossOrigin());
+        assertNull(view.modelDiscoveryUrlIgnoredReason());
+    }
+
+    @Test
+    void createSameOriginModelDiscoveryUrlIsNotCrossOrigin() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForCreate();
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                "USER", "user-1", "deepseek", "model-url")).thenReturn(Optional.empty());
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderId(
+                "USER", "user-1", "deepseek")).thenReturn(List.of());
+
+        ProviderConnection created = service.create(
+                modelUrlInput("remote-models", "https://api.deepseek.com/models"));
+
+        assertFalse(service.view(created).modelDiscoveryUrlCrossOrigin());
+    }
+
+    @Test
+    void createRejectsNonHttpModelDiscoveryUrlWithFieldName() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForCreate();
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                "USER", "user-1", "deepseek", "model-url")).thenReturn(Optional.empty());
+
+        ProviderConnectionService.ModelDiscoveryUrlInvalidException error = assertThrows(
+                ProviderConnectionService.ModelDiscoveryUrlInvalidException.class,
+                () -> service.create(modelUrlInput("remote-models", "ftp://files.example/list")));
+
+        assertTrue(error.getMessage().contains("modelDiscoveryUrl"));
+        assertTrue(error.getMessage().contains("http"));
+    }
+
+    @Test
+    void createIgnoresModelDiscoveryUrlOutsideRemoteModeAndEchoesReason() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForCreate();
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                "USER", "user-1", "deepseek", "model-url")).thenReturn(Optional.empty());
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderId(
+                "USER", "user-1", "deepseek")).thenReturn(List.of());
+
+        ProviderConnection created = service.create(
+                modelUrlInput("manual", "not-a-url"));
+
+        assertNull(created.getModelDiscoveryUrl());
+        var view = service.view(created);
+        assertNull(view.modelDiscoveryUrl());
+        assertFalse(view.modelDiscoveryUrlCrossOrigin());
+        assertNotNull(view.modelDiscoveryUrlIgnoredReason());
+        assertTrue(view.modelDiscoveryUrlIgnoredReason().contains("remote-models"));
+    }
+
+    @Test
+    void updateSetsAndClearsModelDiscoveryUrl() {
+        TenantContext.setUserId("user-1");
+        ProviderConnection connection = connection("user-1", "deepseek", "Model URL");
+        connection.setBaseUrl("https://api.deepseek.com/v1");
+        connection.setModelDiscovery("remote-models");
+        when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
+
+        ProviderConnection saved = service.update(connection.getId().toString(),
+                new ProviderConnectionService.ConnectionInput(
+                        null, null, null, null, null, "remote-models", null, null, null, null,
+                        null, null, null, null, null, "https://models.example.com/list"));
+
+        assertEquals("https://models.example.com/list", saved.getModelDiscoveryUrl());
+        assertTrue(service.view(saved).modelDiscoveryUrlCrossOrigin());
+
+        ProviderConnection cleared = service.update(connection.getId().toString(),
+                new ProviderConnectionService.ConnectionInput(
+                        null, null, null, null, null, "remote-models", null, null, null, null,
+                        null, null, null, null, null, ""));
+
+        assertNull(cleared.getModelDiscoveryUrl());
+    }
+
+    @Test
+    void updateOutsideRemoteModeEchoesIgnoredReason() {
+        TenantContext.setUserId("user-1");
+        ProviderConnection connection = connection("user-1", "deepseek", "Model URL");
+        connection.setBaseUrl("https://api.deepseek.com/v1");
+        connection.setModelDiscovery("remote-models");
+        connection.setModelDiscoveryUrl("https://models.example.com/list");
+        when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
+
+        ProviderConnection saved = service.update(connection.getId().toString(),
+                new ProviderConnectionService.ConnectionInput(
+                        null, null, null, null, null, "manual", null, null, null, null,
+                        null, null, null, null, null, "https://other.example.com/list"));
+
+        assertEquals("manual", saved.getModelDiscovery());
+        assertEquals("https://models.example.com/list", saved.getModelDiscoveryUrl());
+        assertNotNull(service.view(saved).modelDiscoveryUrlIgnoredReason());
+        assertFalse(service.view(saved).modelDiscoveryUrlCrossOrigin());
+    }
+
+    @Test
+    void verifyUsesCustomModelDiscoveryUrlOnlyInRemoteMode() throws Exception {
+        var paths = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            paths.add(exchange.getRequestURI().getPath());
+            byte[] body = "{\"data\":[{\"id\":\"m1\"}]}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+        try {
+            TenantContext.setUserId("user-1");
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            ProviderConnection connection = connection("user-1", "deepseek", "Model URL");
+            connection.setBaseUrl(base);
+            connection.setModelDiscovery("remote-models");
+            connection.setModelDiscoveryUrl(
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/custom/models");
+            when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
+
+            ProviderConnection verified = service.verify(connection.getId().toString());
+
+            assertEquals(ProviderConnection.STATUS_READY, verified.getStatus());
+            assertEquals(List.of("/custom/models"), paths);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void verifyIgnoresCustomModelDiscoveryUrlOutsideRemoteMode() throws Exception {
+        var paths = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            paths.add(exchange.getRequestURI().getPath());
+            byte[] body = "{\"data\":[{\"id\":\"m1\"}]}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+        try {
+            TenantContext.setUserId("user-1");
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            ProviderConnection connection = connection("user-1", "deepseek", "Model URL");
+            connection.setBaseUrl(base);
+            connection.setModelDiscovery("curated");
+            connection.setModelDiscoveryUrl(
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/custom/models");
+            when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
+
+            ProviderConnection verified = service.verify(connection.getId().toString());
+
+            assertEquals(ProviderConnection.STATUS_READY, verified.getStatus());
+            assertEquals(List.of("/v1/models"), paths);
+        } finally {
+            server.stop(0);
+        }
     }
 }

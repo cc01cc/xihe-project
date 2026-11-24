@@ -6,6 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -73,6 +74,17 @@ public class ProviderConnection {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "manual_models", columnDefinition = "jsonb")
     private String manualModels;
+
+    /** R17: only consulted when {@link #modelDiscovery} is {@code remote-models}; null = {@code baseUrl + /models}. */
+    @Column(name = "model_discovery_url", length = 2048)
+    private String modelDiscoveryUrl;
+
+    /**
+     * Not a persisted fact: why a supplied URL was ignored on this write. Projected into the
+     * response only so "ignored because the mode is not remote-models" is explicit, never silent.
+     */
+    @Transient
+    private String modelDiscoveryUrlIgnoredReason;
 
     @Column(nullable = false)
     private long revision = 1;
@@ -153,6 +165,10 @@ public class ProviderConnection {
     public void setModelDiscovery(String modelDiscovery) { this.modelDiscovery = modelDiscovery; }
     public String getManualModels() { return manualModels; }
     public void setManualModels(String manualModels) { this.manualModels = manualModels; }
+    public String getModelDiscoveryUrl() { return modelDiscoveryUrl; }
+    public void setModelDiscoveryUrl(String modelDiscoveryUrl) { this.modelDiscoveryUrl = modelDiscoveryUrl; }
+    public String getModelDiscoveryUrlIgnoredReason() { return modelDiscoveryUrlIgnoredReason; }
+    public void setModelDiscoveryUrlIgnoredReason(String reason) { this.modelDiscoveryUrlIgnoredReason = reason; }
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
     public Integer getMaxInflight() { return maxInflight; }
