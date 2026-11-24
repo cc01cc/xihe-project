@@ -424,6 +424,115 @@ describe("WorkspaceCreateDialog (task-957)", () => {
         ]);
     });
 
+    /**
+     * task-1019：系统根按钮必须是「点一下就出内容」，不是装饰。
+     * 判据直接读目录项：切到 D: 后 D: 的内容出现、C: 的内容消失。
+     */
+    it("task-1019：盘符按钮可点选，点一下即列出该根目录内容", async () => {
+        mockSystemRoots(
+            {
+                "C:\\": [{ name: "c-work", kind: "directory", readable: true, size: 0 }],
+                "D:\\": [{ name: "d-work", kind: "directory", readable: true, size: 0 }],
+            },
+            { drives: ["C:\\", "D:\\"], posix: false },
+        );
+        await mountCreateDialog(wrappers);
+        await vi.waitFor(() => expect(browserEntry("c-work")).toBeTruthy());
+
+        const chips = Array.from(
+            document.body.querySelectorAll<HTMLElement>('[data-testid="workspace-system-root"]'),
+        );
+        const dChip = chips.find((chip) => chip.textContent?.trim() === "D:");
+        expect(dChip).toBeTruthy();
+        dChip!.click();
+
+        await vi.waitFor(() => expect(browserEntry("d-work")).toBeTruthy());
+        expect(browserEntry("c-work")).toBeNull();
+    });
+
+    /**
+     * task-1019：第二根与第一根各自独立；提交只发 `[{path}]` 列表，
+     * 不引入「主根/次根」这种并未存在于契约里的概念。
+     */
+    it("task-1019：第二根独立编辑，提交是纯 path 列表（无主/次根字段）", async () => {
+        mockSystemRoots({ "/": [], "/a": [], "/b": [] });
+        await mountCreateDialog(wrappers);
+
+        await setRootPath("/a", 0);
+        await clickBody('[data-testid="workspace-root-add"]');
+        await setRootPath("/b", 1);
+
+        const inputs = Array.from(
+            document.body.querySelectorAll<HTMLInputElement>('[data-testid="workspace-root-path"]'),
+        );
+        expect(inputs[0]?.value).toBe("/a");
+        expect(inputs[1]?.value).toBe("/b");
+
+        await setBodyValue('[data-testid="workspace-create-name"]', "Two roots");
+        await vi.waitFor(() => expect(submitDisabled()).toBe(false));
+        await clickBody('[data-testid="workspace-create-submit"]');
+        await vi.waitFor(() => expect(mockedApi.createWorkspace).toHaveBeenCalled());
+
+        const payload = mockedApi.createWorkspace.mock.calls[0]![0];
+        expect(payload.roots).toEqual([{ path: "/a" }, { path: "/b" }]);
+        expect(Object.keys(payload)).not.toContain("primaryRoot");
+        expect(Object.keys(payload)).not.toContain("secondaryRoots");
+    });
+
+    /**
+     * task-1019（冻结构建实测的 P0）：目录和名称都填了、后端也可用，按钮却恒灰且无解释。
+     * 根因之一是「多点了一次添加目录」留下一个空行：它必填但未触碰 ⇒ 字段红字不显示，
+     * 而 `submitDisabled` 已经为 true。这里钉住「禁用必须给原因」。
+     */
+    it("task-1019：空目录行会让创建禁用，并明确说是第几个目录缺路径", async () => {
+        mockSystemRoots({ "/": [], "/demo": [] });
+        await mountCreateDialog(wrappers);
+
+        await setRootPath("/demo");
+        await setBodyValue('[data-testid="workspace-create-name"]', "Blocked");
+        await vi.waitFor(() => expect(submitDisabled()).toBe(false));
+
+        await clickBody('[data-testid="workspace-root-add"]');
+        await nextTick();
+        expect(submitDisabled()).toBe(true);
+        const reason =
+            document.body.querySelector('[data-testid="workspace-submit-blocked"]')?.textContent ??
+            "";
+        expect(reason).toContain("第 2 个目录还没有填路径");
+
+        // 补上第二根 ⇒ 阻塞消失、提示消失，并且可以创建。
+        await setRootPath("/second", 1);
+        await vi.waitFor(() => expect(submitDisabled()).toBe(false));
+        expect(document.body.querySelector('[data-testid="workspace-submit-blocked"]')).toBeNull();
+    });
+
+    /**
+     * task-1019：当前选中的后端不可用、另一个可用时，禁用原因要点名「当前」后端，
+     * 而不是让用户对着一张灰按钮猜。
+     */
+    it("task-1019：选中的后端不可用时，禁用原因点名当前后端", async () => {
+        mockSystemRoots({ "/": [], "/demo": [] });
+        mockedApi.preflightDirectAttach.mockImplementation(({ executionMode }) =>
+            Promise.resolve(
+                executionMode === "windows-mxc"
+                    ? preflightResult("windows-mxc", false, "MXC_EXECUTABLE_MISSING")
+                    : preflightResult("windows-host", true),
+            ),
+        );
+
+        await mountCreateDialog(wrappers);
+        await setRootPath("/demo");
+        await setBodyValue('[data-testid="workspace-create-name"]', "No backend");
+        await bodyEl('[data-testid="workspace-mxc-guidance"]');
+
+        expect(submitDisabled()).toBe(true);
+        const reason =
+            document.body.querySelector('[data-testid="workspace-submit-blocked"]')?.textContent ??
+            "";
+        expect(reason).toContain(i18n.global.t("workspace.executionModeMxc"));
+        expect(reason).toContain(i18n.global.t("workspace.submitBlockedBackend").slice(0, 4));
+    });
+
     it("disables the MXC card when preflight reports unavailable and never auto-falls back to host", async () => {
         mockSystemRoots({ "/": [], "/demo": [] });
         mockedApi.preflightDirectAttach.mockImplementation(({ executionMode }) =>

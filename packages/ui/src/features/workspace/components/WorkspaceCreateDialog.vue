@@ -146,6 +146,50 @@ const rootIssue = computed(
     () => rootValidations.value.find((validation) => validation.showError)?.primaryIssue ?? null,
 );
 
+/**
+ * task-1019：提交按钮被禁用时必须说清原因。
+ *
+ * 改动前只有字段级红字，而「多加了一个空目录行」这种状态是**静默**的：该行没被触碰
+ * （`rootsTouched=false` 且路径为空）⇒ 字段红字不显示，但 `submitDisabled` 已经为 true
+ * ⇒ 按钮变灰且页面上找不到任何解释（冻结构建实测：目录/名称/后端全部就绪仍不能创建）。
+ * 这里把 canSubmit 的各分支按同一顺序复述一遍，只输出**第一条**阻塞原因。
+ */
+const submitBlockReason = computed(() => {
+    if (saving.value) return t("workspace.submitBlockedSaving");
+    if (nameValidation.value.submitDisabled) {
+        const issue = nameValidation.value.primaryIssue;
+        return issue ? t(issue.messageKey) : t("workspace.submitBlockedName");
+    }
+    if (descriptionValidation.value.submitDisabled) {
+        const issue = descriptionValidation.value.primaryIssue;
+        return issue ? t(issue.messageKey) : t("workspace.submitBlockedDescription");
+    }
+    if (isDirectAttach.value) {
+        const emptyIndex = roots.value.findIndex((root) => !root.path.trim());
+        if (emptyIndex >= 0) {
+            return t("workspace.submitBlockedEmptyRoot", { index: emptyIndex + 1 });
+        }
+        const invalidIndex = rootValidations.value.findIndex(
+            (validation) => validation.submitDisabled,
+        );
+        if (invalidIndex >= 0) {
+            const issue = rootValidations.value[invalidIndex]?.primaryIssue;
+            return t("workspace.submitBlockedInvalidRoot", {
+                index: invalidIndex + 1,
+                reason: issue ? t(issue.messageKey) : t("workspace.capabilityUnknownReason"),
+            });
+        }
+        if (!hasRootPath.value) return t("workspace.submitBlockedNoRoot");
+        if (!executionSelectionValid.value) {
+            return t("workspace.submitBlockedBackend", { mode: executionModeLabel.value });
+        }
+    }
+    if (executionMode.value === "windows-host" && !hostRiskAck.value) {
+        return t("workspace.hostRiskAckRequired");
+    }
+    return "";
+});
+
 const mxcCardDisabled = computed(() => {
     if (!isDirectAttach.value) return false;
     return preflightLoading.value || !hasRootPath.value || !mxcAvailable.value;
@@ -396,14 +440,18 @@ function useThisDirectory() {
     const activeRoot = roots.value.find((root) => root.id === activeRootId.value) ?? roots.value[0];
     if (!path || !activeRoot) return;
     activeRoot.path = path;
-    executionMode.value = "windows-mxc";
-    hostRiskAck.value = false;
+    // task-1019：选目录不再改写执行后端，也不再清掉宿主风险勾选。
+    // 旧行为把 mode 强制设回 MXC 并重置 ack：当 MXC 不可用时，这一步会把提交静默锁死，
+    // 用户看起来就是「目录和名称都填了却不能创建」。后端切换只由用户显式点击发生
+    // （不自动回退到宿主执行，那是安全约束）。
     void runPreflight();
 }
 
 function addRoot() {
     roots.value.push(createRoot());
     activeRootId.value = roots.value[roots.value.length - 1]!.id;
+    // task-1019：新增的空行必须立刻进入校验态，否则它会静默把提交按钮锁死却没有红字。
+    rootsTouched.value = true;
 }
 
 function removeRoot(root: RootDraft) {
@@ -495,9 +543,9 @@ async function runPreflight() {
         );
         mxcPreflight.value = aggregatePreflights(pairs.map((pair) => pair[0]));
         hostPreflight.value = aggregatePreflights(pairs.map((pair) => pair[1]));
-        // Keep MXC as the recommended default. When it is unavailable the UI shows explicit
-        // guidance and never silently switches to host execution (no automatic fallback).
-        if (mxcAvailable.value) executionMode.value = "windows-mxc";
+        // task-1019：不再在每次 preflight 后强制切回 MXC。默认值在 reset() 里给，
+        // 用户显式选过的后端必须保留；「不自动回退到宿主」的约束只针对**自动**切换，
+        // 这里唯一允许的调整是：当前选中的后端不可用而另一个可用（见 useThisDirectory）。
     } catch (cause) {
         preflightError.value = preflightReason(cause);
         logger.error("Workspace capability preflight failed", cause);
@@ -618,21 +666,26 @@ watch(
                          counts as frozen, so the product surface must not offer it at all. The
                          entry is hidden (not merely disabled): an unavailable option with a live
                          click handler invites the user to reach the container-creation error. -->
-                    <div
+                    <!-- task-1019：冻结的托管副本不再占首屏，折叠为一段「高级说明」；
+                         首屏只剩真正可用的那一种方式。 -->
+                    <details
                         v-if="!managedImportAvailable"
                         data-testid="workspace-storage-managed-frozen"
                         class="rounded-md border border-dashed p-3"
                     >
-                        <span class="block text-sm font-semibold text-muted-foreground">
+                        <summary
+                            class="cursor-pointer text-sm font-medium text-muted-foreground select-none"
+                        >
+                            {{ t("workspace.storageAdvanced") }} ·
                             {{ t("workspace.managedImport") }}
                             <span class="font-normal"
-                                >· {{ t("workspace.managedImportFrozen") }}</span
+                                >（{{ t("workspace.managedImportFrozen") }}）</span
                             >
-                        </span>
-                        <span class="mt-1 block text-xs text-muted-foreground">
+                        </summary>
+                        <p class="mt-2 text-xs text-muted-foreground">
                             {{ t("workspace.managedImportFrozenHint") }}
-                        </span>
-                    </div>
+                        </p>
+                    </details>
                     <button
                         v-else
                         type="button"
@@ -658,7 +711,7 @@ watch(
 
                 <section v-if="isDirectAttach" class="grid gap-2" data-testid="workspace-roots">
                     <div class="flex items-center justify-between gap-2">
-                        <p class="text-sm font-medium">{{ t("workspace.hostDirectory") }}</p>
+                        <p class="text-sm font-medium">{{ t("workspace.rootsTitle") }}</p>
                         <Button
                             type="button"
                             variant="outline"
@@ -666,7 +719,7 @@ watch(
                             @click="addRoot"
                         >
                             <Plus class="size-3.5" aria-hidden="true" />
-                            {{ t("workspace.hostDirectory") }}
+                            {{ t("workspace.addRoot") }}
                         </Button>
                     </div>
                     <div data-testid="workspace-root-list" class="grid gap-2">
@@ -695,7 +748,7 @@ watch(
                                 variant="outline"
                                 class="shrink-0"
                                 data-testid="workspace-root-browse"
-                                :aria-label="t('workspace.hostDirectory')"
+                                :aria-label="t('workspace.browseDirectory')"
                                 @click="browseRoot(root)"
                             >
                                 <FolderOpen class="size-3.5" aria-hidden="true" />
@@ -706,7 +759,7 @@ watch(
                                 variant="ghost"
                                 class="shrink-0"
                                 data-testid="workspace-root-remove"
-                                :aria-label="t('workspace.cancel')"
+                                :aria-label="t('workspace.removeDirectory')"
                                 @click="removeRoot(root)"
                             >
                                 <X class="size-3.5" aria-hidden="true" />
@@ -1103,6 +1156,14 @@ watch(
                     data-testid="workspace-create-error"
                 >
                     {{ submitError }}
+                </p>
+                <!-- task-1019：禁用态必须带原因；这是「为什么点不动」的唯一权威出口。 -->
+                <p
+                    v-if="!canSubmit && submitBlockReason"
+                    class="text-xs text-muted-foreground"
+                    data-testid="workspace-submit-blocked"
+                >
+                    {{ submitBlockReason }}
                 </p>
             </div>
 
