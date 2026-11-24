@@ -171,21 +171,26 @@ const { resizing: navResizing, layoutReady: navLayoutReady } = navBridge;
  * 键盘折叠仍有过渡。禁止用 setTimeout/强制 reflow 绕过。
  */
 /**
- * 首次布局那一帧也不参与动画：reka 的就绪回调与首帧 `flex-grow` 写入发生在同一帧内，
- * 只 gate `layoutReady` 不够 —— class 在同一帧翻转，浏览器仍会从 0 起算。这里再等
- * **两次 rAF**（第一帧以最终宽度完成绘制之后）才允许过渡。rAF 是「下一帧」语义，不是
- * 定时器兜底：不设固定延时、不依赖机器速度。
+ * 首次布局那一帧也不参与动画：reka 在**首次测量之后**才把最终 `flex-grow` 写进内联样式
+ * （实测挂载时先无内联值，随后写成 21/79）。只 gate `layoutReady` 不够 —— class 与那次
+ * 写入同帧翻转，浏览器仍从 0 起算并动画 300ms。这里在 layoutReady 之后再等**两次 rAF**
+ * （最终宽度已绘制）才允许过渡。rAF 是「下一帧」语义，不是定时器兜底：不设固定延时、
+ * 不依赖机器速度。
  */
-const navShellPainted = ref(false);
-onMounted(() => {
+const navShellSettled = ref(false);
+watch(navLayoutReady, (ready) => {
+    if (!ready) {
+        navShellSettled.value = false;
+        return;
+    }
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-            navShellPainted.value = true;
+            if (navLayoutReady.value) navShellSettled.value = true;
         });
     });
 });
 const navShellAnimated = computed(
-    () => navShellPainted.value && navLayoutReady.value && !navResizing.value,
+    () => navShellSettled.value && navLayoutReady.value && !navResizing.value,
 );
 
 function setNavPanel(el: unknown): void {
