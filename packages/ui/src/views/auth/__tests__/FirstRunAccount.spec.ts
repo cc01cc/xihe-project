@@ -72,6 +72,57 @@ describe("first-run account", () => {
         expect(wrapper.text()).not.toContain(i18n.global.t("onboarding.firstRunSecret"));
     });
 
+    it("selects the prefilled username on focus so typing replaces it (task-1013)", async () => {
+        mocks.disclose.mockResolvedValue({
+            state: "operator-provided",
+            account: { email: "admin@example.invalid", username: "admin" },
+            secret: null,
+            source: "env",
+        });
+        const wrapper = mountView();
+        await wrapper.get("button").trigger("click");
+        await flushPromises();
+
+        const input = wrapper.get("#first-run-username");
+        const element = input.element as HTMLInputElement;
+        expect(element.value).toBe("admin");
+
+        // 鼠标点击带来的焦点：mousedown 后的 mouseup 不得把光标落回点击位置。
+        await input.trigger("mousedown");
+        await input.trigger("focus");
+        await input.trigger("mouseup");
+
+        expect(element.selectionStart).toBe(0);
+        expect(element.selectionEnd).toBe("admin".length);
+        // 模拟「直接键入」：选中区间被替换，而不是追加成 adminadmin。
+        element.setRangeText("root", element.selectionStart ?? 0, element.selectionEnd ?? 0, "end");
+        expect(element.value).toBe("root");
+    });
+
+    it("explains that both the email and the username can sign in (task-1013)", async () => {
+        mocks.disclose.mockResolvedValue({
+            state: "operator-provided",
+            account: { email: "admin@example.invalid", username: "admin" },
+            secret: null,
+            source: "env",
+        });
+        const wrapper = mountView();
+        await wrapper.get("button").trigger("click");
+        await flushPromises();
+
+        const usernameHint = i18n.global.t("onboarding.firstRunUsernameHint");
+        const loginHint = i18n.global.t("onboarding.firstRunLoginHint");
+        expect(i18n.global.t("onboarding.firstRunUsername")).toContain("用户名");
+        expect(usernameHint).toContain("邮箱");
+        expect(loginHint).toContain("邮箱");
+        expect(loginHint).toContain("用户名");
+        expect(wrapper.text()).toContain(usernameHint);
+        expect(wrapper.text()).toContain(loginHint);
+        expect(wrapper.get("#first-run-username").attributes("aria-describedby")).toBe(
+            "first-run-username-hint",
+        );
+    });
+
     it.each([
         ["server error", new ApiError({ status: 500, code: "ERROR", requestId: "test" })],
         ["network error", new Error("network")],

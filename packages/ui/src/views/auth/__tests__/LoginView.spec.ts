@@ -1,6 +1,8 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as VueI18nModule from "vue-i18n";
 import LoginView from "../LoginView.vue";
+import { i18n } from "../../../i18n";
 
 const { authMock, pushMock, configMock, routeMock } = vi.hoisted(() => ({
     authMock: {
@@ -21,18 +23,22 @@ vi.mock("vue-router", () => ({
     useRouter: () => ({ push: pushMock }),
     useRoute: () => routeMock,
 }));
-vi.mock("vue-i18n", () => ({
-    useI18n: () => ({
-        t: (key: string, params?: Record<string, unknown>) =>
-            key === "onboarding.firstRunEntry"
-                ? "查看首启管理员账号"
-                : key === "authErrors.technicalDetails"
-                  ? "技术详情"
-                  : params
-                    ? `${key} ${JSON.stringify(params)}`
-                    : key,
-    }),
-}));
+vi.mock("vue-i18n", async (importOriginal) => {
+    const actual = await importOriginal<typeof VueI18nModule>();
+    return {
+        ...actual,
+        useI18n: () => ({
+            t: (key: string, params?: Record<string, unknown>) =>
+                key === "onboarding.firstRunEntry"
+                    ? "查看首启管理员账号"
+                    : key === "authErrors.technicalDetails"
+                      ? "技术详情"
+                      : params
+                        ? `${key} ${JSON.stringify(params)}`
+                        : key,
+        }),
+    };
+});
 
 function mountView() {
     return mount(LoginView, {
@@ -157,5 +163,36 @@ describe("LoginView submission lock", () => {
             "Invalid credentials",
         );
         expect(alert.text()).not.toMatch(/\b(workspace|auth|settings|chat)\./);
+    });
+
+    it("passes a username identifier through unchanged (task-1013)", async () => {
+        // CP AuthService 对不含 @ 的 identifier 走 findByUsername；UI 不得改写它。
+        authMock.login.mockResolvedValue(false);
+        const wrapper = mountView();
+        await wrapper.find("#identifier").setValue("admin");
+        await wrapper.find("#password").setValue("pw-12345678");
+        await wrapper.find("form").trigger("submit");
+
+        expect(authMock.login).toHaveBeenCalledWith("admin", "pw-12345678");
+    });
+
+    it("passes an email identifier through unchanged (task-1013)", async () => {
+        authMock.login.mockResolvedValue(false);
+        const wrapper = mountView();
+        await wrapper.find("#identifier").setValue("admin@xihe.local");
+        await wrapper.find("#password").setValue("pw-12345678");
+        await wrapper.find("form").trigger("submit");
+
+        expect(authMock.login).toHaveBeenCalledWith("admin@xihe.local", "pw-12345678");
+    });
+
+    it("names email and username as the two sign-in identifiers (task-1013)", () => {
+        // 与 CP 契约（LoginRequest.identifier = email 含 @ 或 username）及 AuthService 分支一致。
+        const label = i18n.global.t("login.username");
+        const hint = i18n.global.t("login.identifierHint");
+        expect(label).toContain("邮箱");
+        expect(label).toContain("用户名");
+        expect(hint).toContain("邮箱");
+        expect(hint).toContain("用户名");
     });
 });

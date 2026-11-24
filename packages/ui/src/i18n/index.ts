@@ -4229,6 +4229,7 @@ export const messages = {
         login: {
             title: "登录",
             username: "邮箱/用户名",
+            identifierHint: "邮箱或用户名（账号名）都可以登录。",
             password: "密码",
             submit: "登录",
             hint: "输入你的账号信息",
@@ -4269,7 +4270,10 @@ export const messages = {
             firstRunOnce: "口令仅显示一次，刷新或离开后无法再次查看，请妥善保存。",
             firstRunOperator: "口令由部署配置提供，不会在此显示。",
             firstRunEmail: "邮箱（占位地址可稍后在管理界面修改）",
-            firstRunUsername: "用户名",
+            firstRunUsername: "用户名（账号名）",
+            firstRunLoginHint: "上面的邮箱与下面的用户名都可以用来登录，密码相同。",
+            firstRunUsernameHint:
+                "登录时可用这个用户名或上面的邮箱；用户名不能以数字开头，最长 32 位。",
             firstRunSecret: "一次性口令",
             firstRunNewPassword: "新密码（8–128 位）",
             firstRunRewrite: "保存新账号信息",
@@ -8973,6 +8977,7 @@ export const messages = {
         login: {
             title: "Login",
             username: "Email/Username",
+            identifierHint: "You can sign in with either your email or your username.",
             password: "Password",
             submit: "Login",
             hint: "Enter your credentials",
@@ -9014,7 +9019,11 @@ export const messages = {
             firstRunOperator:
                 "The password was provided in the deployment configuration and is not shown here.",
             firstRunEmail: "Email (a placeholder can be changed later in administration)",
-            firstRunUsername: "Username",
+            firstRunUsername: "Username (account name)",
+            firstRunLoginHint:
+                "Both the email above and the username below work as sign-in identifiers with the same password.",
+            firstRunUsernameHint:
+                "Either this username or the email above can be used to sign in; a username cannot start with a digit and is at most 32 characters.",
             firstRunSecret: "One-time password",
             firstRunNewPassword: "New password (8–128 characters)",
             firstRunRewrite: "Save account changes",

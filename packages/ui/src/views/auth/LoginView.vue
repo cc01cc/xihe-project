@@ -97,6 +97,9 @@ async function handleSubmit() {
                         :disabled="busy"
                         class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
                     />
+                    <p class="mt-1 text-xs text-muted-foreground">
+                        {{ t("login.identifierHint") }}
+                    </p>
                 </div>
                 <div>
                     <label class="block text-sm font-medium mb-1" for="password">{{

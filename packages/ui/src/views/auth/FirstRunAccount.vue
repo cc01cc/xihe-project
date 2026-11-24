@@ -13,6 +13,29 @@ const rewritten = ref(false);
 const error = ref("");
 let active = true;
 
+/**
+ * task-1013：用户名输入框在披露后被预填（首启种子账号是 `admin`），
+ * 直接键入会变成 `adminadmin`。获得焦点时全选即可让键入替换原值；
+ * 鼠标点击还要吞掉紧随其后的 mouseup，否则浏览器会把光标落到点击位置、
+ * 覆盖掉 select() 的结果。只在「这次按下会带来焦点」时介入，避免影响
+ * 已聚焦后的正常光标定位。
+ */
+let focusFromMouseDown = false;
+
+function onUsernameMouseDown(event: MouseEvent) {
+    focusFromMouseDown = document.activeElement !== event.target;
+}
+
+function onUsernameFocus(event: FocusEvent) {
+    (event.target as HTMLInputElement | null)?.select();
+}
+
+function onUsernameMouseUp(event: MouseEvent) {
+    if (!focusFromMouseDown) return;
+    focusFromMouseDown = false;
+    event.preventDefault();
+}
+
 onUnmounted(() => {
     active = false;
     disclosure.value = null;
@@ -85,6 +108,9 @@ async function rewrite() {
             <p class="text-sm">
                 {{ t("onboarding.firstRunEmail") }}: {{ disclosure.account.email }}
             </p>
+            <p class="text-xs text-muted-foreground">
+                {{ t("onboarding.firstRunLoginHint") }}
+            </p>
             <p
                 v-if="disclosure.state === 'generated-secret' && disclosure.secret?.value"
                 class="break-all text-sm"
@@ -92,16 +118,25 @@ async function rewrite() {
                 {{ t("onboarding.firstRunSecret") }}: <code>{{ disclosure.secret.value }}</code>
             </p>
             <form class="space-y-4" @submit.prevent="rewrite">
-                <label class="block text-sm" for="first-run-username">
-                    {{ t("onboarding.firstRunUsername") }}
-                </label>
-                <input
-                    id="first-run-username"
-                    v-model="username"
-                    autocomplete="username"
-                    maxlength="32"
-                    class="w-full rounded-md border bg-background px-3 py-2"
-                />
+                <div class="space-y-1">
+                    <label class="block text-sm" for="first-run-username">
+                        {{ t("onboarding.firstRunUsername") }}
+                    </label>
+                    <input
+                        id="first-run-username"
+                        v-model="username"
+                        autocomplete="username"
+                        maxlength="32"
+                        aria-describedby="first-run-username-hint"
+                        @mousedown="onUsernameMouseDown"
+                        @focus="onUsernameFocus"
+                        @mouseup="onUsernameMouseUp"
+                        class="w-full rounded-md border bg-background px-3 py-2"
+                    />
+                    <p id="first-run-username-hint" class="text-xs text-muted-foreground">
+                        {{ t("onboarding.firstRunUsernameHint") }}
+                    </p>
+                </div>
                 <label class="block text-sm" for="first-run-password">
                     {{ t("onboarding.firstRunNewPassword") }}
                 </label>
