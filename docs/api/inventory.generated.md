@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**382** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 278 · 服务间 104
+- 规模：**383** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 279 · 服务间 104
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（382 / 382 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（383 / 383 个操作带 tag）。
 
-## public（278 operations · 公开 · 17 tags）
+## public（279 operations · 公开 · 17 tags）
 
 ### auth（14）
 
@@ -30,7 +30,7 @@
 | `POST /api/v1/oauth/sessions` | `startOAuthSession` | `bearerAuth` | Start an OAuth session for a provider | 公开 |
 | `GET /api/v1/workspaces/{workspaceId}/members/{userId}/effective-permissions` | `workspaceMemberEffectivePermissions` | `bearerAuth` | Effective capabilities of one workspace member (task-52) | 公开 |
 
-### admin（26）
+### admin（27）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -42,9 +42,10 @@
 | `GET /api/v1/org-units` | `listOrgUnits` | `bearerAuth` | List org-unit nodes (tree top, lazy-loaded children, or name search) | 公开 |
 | `POST /api/v1/org-units` | `createOrgUnit` | `bearerAuth` | Create an org unit (a root when parentId is null) | 公开 |
 | `PATCH /api/v1/org-units/{unitId}` | `renameOrgUnit` | `bearerAuth` | Rename an org unit | 公开 |
+| `DELETE /api/v1/org-units/{unitId}` | `deleteOrgUnit` | `bearerAuth` | Delete an empty org unit (refused when it has children or members) | 公开 |
 | `GET /api/v1/org-units/{unitId}/members` | `listOrgUnitMembers` | `bearerAuth` | List the humans and agent principals attached to one org unit | 公开 |
 | `PUT /api/v1/org-units/{unitId}/members/{memberId}` | `moveOrgUnitMember` | `bearerAuth` | Add or move one human/agent into an org unit (G1: affected workspaces + audit + confirmation) | 公开 |
-| `DELETE /api/v1/org-units/{unitId}/members/{memberId}` | `removeOrgUnitMember` | `bearerAuth` | Remove one human/agent from an org unit | 公开 |
+| `DELETE /api/v1/org-units/{unitId}/members/{memberId}` | `removeOrgUnitMember` | `bearerAuth` | Deactivate one human/agent and remove it from its org unit | 公开 |
 | `PUT /api/v1/org-units/{unitId}/parent` | `moveOrgUnit` | `bearerAuth` | Move an org unit under a new parent (rejects rings with 422) | 公开 |
 | `PUT /api/v1/org-units/{unitId}/preset-bindings` | `replaceOrgUnitRoleBindings` | `bearerAuth` | Replace an org unit's role bindings as one set | 公开 |
 | `GET /api/v1/presets` | `listRoles` | `bearerAuth` | List access-role definitions (PLAN-0610 W3-2a; PLAN-0667 gap-1 read path) | 公开 |

@@ -3,15 +3,21 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.controller.OrgUnitWireView;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
+import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -47,19 +53,32 @@ public class OrgUnitMemberService {
     /** The audit action G1 names verbatim; also returned in the response so a client need not guess. */
     public static final String AUDIT_EVENT = "org_membership_moved";
 
+    /**
+     * R31 (task-956): removing a member now means <b>deactivating the subject</b>, so the durable
+     * row is named for that action. "Removed from the unit" and "deactivated" are the same call on
+     * purpose — the MVP has no free-floating member, so there is no honest way to remove a subject
+     * from its only unit and leave the account active.
+     */
+    public static final String REMOVED_AUDIT_EVENT = "org_membership_deactivated";
+
     private final OrgUnitReadRepository units;
     private final OrgUnitMemberRepository members;
     private final OrgUnitAccess access;
     private final AuditLogger audit;
     private final ObjectMapper objectMapper;
+    private final UserRepository users;
+    private final AgentPrincipalRepository principals;
 
     public OrgUnitMemberService(OrgUnitReadRepository units, OrgUnitMemberRepository members,
-                                OrgUnitAccess access, AuditLogger audit, ObjectMapper objectMapper) {
+                                OrgUnitAccess access, AuditLogger audit, ObjectMapper objectMapper,
+                                UserRepository users, AgentPrincipalRepository principals) {
         this.units = units;
         this.members = members;
         this.access = access;
         this.audit = audit;
         this.objectMapper = objectMapper;
+        this.users = users;
+        this.principals = principals;
     }
 
     @Transactional
@@ -96,16 +115,81 @@ public class OrgUnitMemberService {
         return new OrgUnitWireView.MemberMoved(memberId, fromUnitId, unit.id(), affected, AUDIT_EVENT);
     }
 
+    /**
+     * R31: "remove" is <b>deactivation</b>, not a bare membership delete (task-956; MVP ruling:
+     * every member is inside the org, so the only exits are "move to another unit" — which is
+     * {@link #move} — and "delete the subject").
+     *
+     * <p><b>Why plan A and not "drop the endpoint".</b> Dropping the endpoint would leave no way to
+     * delete an account from the org surface, and the very next caller would either re-add a bare
+     * delete or deactivate subjects through some unrelated admin face. Deactivation uses the
+     * lifecycle columns the platform already owns ({@code users.status}/{@code users.deleted_at},
+     * {@code agent_principals.disabled_at}) and revokes both credential channels for a human
+     * ({@code token_version}/{@code session_version}), so a removed member stops authenticating on
+     * the next request rather than after the access-token TTL. No new column is needed: this is
+     * why the card's V188 is <b>not</b> consumed.</p>
+     *
+     * <p>The pair-specific 404 runs <b>before</b> deactivation: a caller targeting the wrong unit
+     * must not be able to disable a subject that merely lives somewhere else in its subtree.</p>
+     */
     @Transactional
     public void remove(String unitIdValue, String memberIdValue, String memberKindValue) {
         OrgUnitAccess.Scope scope = access.resolve(MANAGE_MEMBERS_ATOM);
         OrgUnitReadRepository.UnitRow unit = requireUnit(unitIdValue, scope);
         String memberKind = requireKind(memberKindValue);
         UUID memberId = requireMemberId(memberIdValue);
-        if (!members.remove(memberKind, memberId, unit.id())) {
+        UUID currentUnit = members.findUnitOf(memberKind, memberId).orElse(null);
+        if (currentUnit == null || !currentUnit.equals(unit.id())) {
             throw new CpApiException(HttpStatus.NOT_FOUND, "ORG_UNIT_MEMBER_NOT_FOUND",
                     "that subject is not a member of this org unit");
         }
+
+        boolean alreadyDeactivated = deactivateSubject(memberKind, memberId);
+        members.removeAll(memberKind, memberId);
+
+        ObjectNode detail = objectMapper.createObjectNode();
+        detail.put("memberKind", memberKind);
+        detail.put("memberId", memberId.toString());
+        detail.put("orgUnitId", unit.id().toString());
+        detail.put("subjectAction", "deactivated");
+        detail.put("alreadyDeactivated", alreadyDeactivated);
+        audit.recordDurableChange(access.currentActorId(), null, REMOVED_AUDIT_EVENT,
+                "org_unit_member", memberId.toString(), detail.toString());
+    }
+
+    /**
+     * Deactivate the subject row itself. Humans use the existing soft-delete contract
+     * (`deleted_at` implies `status = DISABLED`, V86) and both epochs are bumped so access and
+     * refresh tokens die in the same transaction (PLAN-0581 §4). Agent principals use
+     * `disabled_at`, the same column the principal admin face writes.
+     *
+     * @return true when the subject was already deactivated (a legacy row whose membership outlived
+     *     the account), false when this call performed the transition.
+     */
+    private boolean deactivateSubject(String memberKind, UUID memberId) {
+        if ("human".equals(memberKind)) {
+            User user = users.findById(memberId).orElseThrow(() -> new CpApiException(
+                    HttpStatus.NOT_FOUND, "ORG_UNIT_MEMBER_NOT_FOUND",
+                    "that subject is not a member of this org unit"));
+            if (user.getDeletedAt() != null) {
+                return true;
+            }
+            user.setDeletedAt(Instant.now());
+            user.setStatus(UserStatus.DISABLED);
+            user.bumpTokenVersion();
+            user.bumpSessionVersion();
+            users.save(user);
+            return false;
+        }
+        AgentPrincipal principal = principals.findById(memberId).orElseThrow(() -> new CpApiException(
+                HttpStatus.NOT_FOUND, "ORG_UNIT_MEMBER_NOT_FOUND",
+                "that subject is not a member of this org unit"));
+        if (principal.getDisabledAt() != null) {
+            return true;
+        }
+        principal.setDisabledAt(Instant.now());
+        principals.save(principal);
+        return false;
     }
 
     private OrgUnitReadRepository.UnitRow requireUnit(String unitIdValue, OrgUnitAccess.Scope scope) {

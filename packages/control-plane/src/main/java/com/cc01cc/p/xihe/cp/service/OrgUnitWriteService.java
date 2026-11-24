@@ -1,10 +1,13 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.controller.OrgUnitWireView;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitWriteRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -13,6 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.SQLException;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -43,21 +48,29 @@ public class OrgUnitWriteService {
 
     public static final String MANAGE_ATOM = ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS;
 
+    /** The delete audit action; named here so a test can pin the durable row, not just a log line. */
+    public static final String DELETE_AUDIT_EVENT = "org_unit_deleted";
+
     private static final Logger logger = LoggerFactory.getLogger(OrgUnitWriteService.class);
 
     /** PostgreSQL SQLSTATE raised by the V165 cycle trigger. */
     private static final String CYCLE_SQLSTATE = "XH001";
     private static final String UNIQUE_VIOLATION_SQLSTATE = "23505";
+    private static final String FOREIGN_KEY_VIOLATION_SQLSTATE = "23503";
 
     private final OrgUnitReadRepository units;
     private final OrgUnitWriteRepository writer;
     private final OrgUnitAccess access;
+    private final AuditLogger audit;
+    private final ObjectMapper objectMapper;
 
     public OrgUnitWriteService(OrgUnitReadRepository units, OrgUnitWriteRepository writer,
-                               OrgUnitAccess access) {
+                               OrgUnitAccess access, AuditLogger audit, ObjectMapper objectMapper) {
         this.units = units;
         this.writer = writer;
         this.access = access;
+        this.audit = audit;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -128,6 +141,62 @@ public class OrgUnitWriteService {
             throw translate(e);
         }
         return node(unit.id(), unit.name(), parentId, newDepth);
+    }
+
+    /**
+     * R32: delete an <b>empty</b> org unit (task-956).
+     *
+     * <p><b>Cascade contract, stated rather than implied.</b> A unit is deletable only when it has
+     * no direct children and no members; both answers are counted and returned to the caller in the
+     * 409 problem body (`childCount` / `memberCount`) before anything is written. The alternative —
+     * deleting the subtree and its members in one statement — would let one click delete people's
+     * governance scope, which is not what an org-tree delete should mean. Preset bindings are the
+     * one thing that <b>does</b> go with the unit: they are configuration of the unit itself
+     * (`org_unit_preset_bindings`, `ON DELETE CASCADE` in V166) and a preset binding without a unit
+     * has no meaning. Their ids are captured in the audit row before the cascade runs, so "what
+     * disappeared" is still readable after the rows are gone.</p>
+     *
+     * <p>The database remains the judgement behind the readable refusal: V163/V164 use
+     * `ON DELETE RESTRICT` for `parent_id` and `org_unit_members`, so a raced-in child or member
+     * (or a future caller that skips this check) is refused by PostgreSQL; that racing case is
+     * translated back into the same 409 rather than surfacing as a 500.</p>
+     */
+    @Transactional
+    public void delete(String unitIdValue) {
+        OrgUnitAccess.Scope scope = access.resolve(MANAGE_ATOM);
+        OrgUnitReadRepository.UnitRow unit = require(unitIdValue, scope);
+
+        int childCount = writer.countChildren(unit.id());
+        int memberCount = writer.countMembers(unit.id());
+        if (childCount > 0 || memberCount > 0) {
+            String code = childCount > 0 ? "ORG_UNIT_HAS_CHILDREN" : "ORG_UNIT_HAS_MEMBERS";
+            String detail = "org unit still has " + childCount + " direct child unit(s) and "
+                    + memberCount + " member(s); move or delete them first";
+            throw new CpApiException(HttpStatus.CONFLICT, code, detail)
+                    .withExtra(Map.of("childCount", childCount, "memberCount", memberCount));
+        }
+
+        List<UUID> presetIds = writer.presetBindingIds(unit.id());
+        try {
+            writer.delete(unit.id());
+        } catch (DataAccessException e) {
+            SQLException sql = findSqlException(e);
+            if (sql != null && FOREIGN_KEY_VIOLATION_SQLSTATE.equals(sql.getSQLState())) {
+                throw new CpApiException(HttpStatus.CONFLICT, "ORG_UNIT_NOT_EMPTY",
+                        "another request added a child unit or member to this unit; retry the read"
+                                + " and decide again");
+            }
+            throw e;
+        }
+
+        ObjectNode detail = objectMapper.createObjectNode();
+        detail.put("name", unit.name());
+        detail.put("parentId", unit.parentId() == null ? null : unit.parentId().toString());
+        detail.put("depth", unit.depth());
+        var presetNode = detail.putArray("presetBindingIds");
+        presetIds.forEach(id -> presetNode.add(id.toString()));
+        audit.recordDurableChange(access.currentActorId(), null, DELETE_AUDIT_EVENT, "org_unit",
+                unit.id().toString(), detail.toString());
     }
 
     private OrgUnitReadRepository.UnitRow require(String unitIdValue, OrgUnitAccess.Scope scope) {

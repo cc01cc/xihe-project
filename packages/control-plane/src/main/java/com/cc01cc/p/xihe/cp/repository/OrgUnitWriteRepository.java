@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.repository;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -72,5 +73,35 @@ public class OrgUnitWriteRepository {
                 newSelfPath, oldSelfPath, depthDelta, oldSelfPath, id);
         jdbc.update("UPDATE org_units SET parent_id = ?, path = ?::ltree, depth = ?, updated_at = now()"
                 + " WHERE id = ?", parentId, newSelfPath, newDepth, id);
+    }
+
+    /** Direct children of a unit — the "may this unit be deleted" question R32 asks first. */
+    public int countChildren(UUID id) {
+        Integer count = jdbc.queryForObject("SELECT count(*) FROM org_units WHERE parent_id = ?",
+                Integer.class, id);
+        return count == null ? 0 : count;
+    }
+
+    /** Members of a unit (its subtree is empty once it has no children) — the second refusal R32 asks. */
+    public int countMembers(UUID id) {
+        Integer count = jdbc.queryForObject("SELECT count(*) FROM org_unit_members WHERE org_unit_id = ?",
+                Integer.class, id);
+        return count == null ? 0 : count;
+    }
+
+    /** The preset ids attached to this unit, recorded in the delete audit before the cascade runs. */
+    public List<UUID> presetBindingIds(UUID id) {
+        return jdbc.queryForList("SELECT role_id FROM org_unit_preset_bindings WHERE org_unit_id = ?",
+                UUID.class, id);
+    }
+
+    /**
+     * Delete one unit. The database still carries the judgement: V163's `ON DELETE RESTRICT` on
+     * `parent_id` and V164's `ON DELETE RESTRICT` on `org_unit_members` refuse a non-empty unit even
+     * if a future caller skips the service checks; only `org_unit_preset_bindings` cascades (V166),
+     * which the service states in the contract and records in the audit row.
+     */
+    public void delete(UUID id) {
+        jdbc.update("DELETE FROM org_units WHERE id = ?", id);
     }
 }

@@ -55,6 +55,19 @@ public class OrgUnitMemberRepository {
     }
 
     /**
+     * Remove every membership row of one subject. The primary key is
+     * {@code (member_kind, member_id)} (V164), so this is at most one row today; the statement is
+     * written as a set delete so a future schema change cannot leave a second row behind and
+     * reintroduce a free-floating member.
+     *
+     * @return the number of rows removed
+     */
+    public int removeAll(String memberKind, UUID memberId) {
+        return jdbc.update("DELETE FROM org_unit_members WHERE member_kind = ? AND member_id = ?",
+                memberKind, memberId);
+    }
+
+    /**
      * The workspaces a subject owns: `WS_OWNER` role bindings at workspace scope. G1's whole point
      * is that these are the workspaces whose owner the subject is <b>right now</b> — the move does
      * not touch a single binding, so the caller has to be told what it is about to change the

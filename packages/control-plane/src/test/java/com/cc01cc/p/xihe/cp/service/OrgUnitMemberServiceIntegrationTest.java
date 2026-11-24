@@ -10,11 +10,13 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import org.junit.jupiter.api.AfterEach;
@@ -77,6 +79,9 @@ class OrgUnitMemberServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private AgentPrincipalRepository principals;
 
     private String suffix;
     private UUID caller;
@@ -174,8 +179,15 @@ class OrgUnitMemberServiceIntegrationTest extends AbstractIntegrationTest {
         assertTrue(detail.contains("affectedWorkspaceIds"), "G1 names the field it added");
     }
 
+    /**
+     * R31 (task-956): the old assertion "the membership row is gone" is no longer enough. The
+     * invariant is the MVP one: <b>no path may leave an active subject outside the org</b>. So after
+     * a remove the subject must be (a) absent from every unit <b>and</b> (b) deactivated — an
+     * account row that survives for traceability, but one that cannot authenticate. A second
+     * remove of the same pair is a 404 because the pair no longer exists.
+     */
     @Test
-    void removingAMemberDeletesTheRowAndASecondRemoveIsA404() {
+    void removingAMemberDeactivatesTheSubjectAndASecondRemoveIsA404() {
         UUID root = insertUnit(null, "root-" + suffix, null, 0);
         UUID unit = insertUnit(root, "unit-" + suffix, rootPathOf(root), 1);
         jdbc.update("INSERT INTO org_unit_members (org_unit_id, member_kind, member_id)"
@@ -185,13 +197,99 @@ class OrgUnitMemberServiceIntegrationTest extends AbstractIntegrationTest {
         grant(caller, OrgUnitMemberService.MANAGE_MEMBERS_ATOM);
         TenantContext.setUserId(caller.toString());
 
+        int auditBefore = auditCount(OrgUnitMemberService.REMOVED_AUDIT_EVENT);
         memberService.remove(unit.toString(), member.toString(), "human");
-        assertNull(unitOf("human", member), "the row is gone");
+        assertNull(unitOf("human", member), "the membership row is gone");
+        assertEquals(0, membershipRows("human", member),
+                "the subject is in no unit at all — not just no longer in this one");
+        assertEquals(0, activeMemberships("human", member),
+                "MVP invariant: an active subject can never be unit-less");
+        assertEquals(1, disabledUsers(member),
+                "the account row survives, soft-deleted and disabled — traceable, not erased");
+        assertTrue(jdbc.queryForObject("SELECT token_version FROM users WHERE id = ?",
+                        Integer.class, member) > 0,
+                "both credential epochs are bumped, so access/refresh tokens die now");
+        assertEquals(auditBefore + 1, auditCount(OrgUnitMemberService.REMOVED_AUDIT_EVENT),
+                "the deactivation is audited durably, not only logged");
         CpApiException again = assertThrows(CpApiException.class,
                 () -> memberService.remove(unit.toString(), member.toString(), "human"));
         assertEquals(HttpStatus.NOT_FOUND, again.getStatus());
         assertEquals("ORG_UNIT_MEMBER_NOT_FOUND", again.getCode(),
                 "removing a non-member of that unit is a 404 with the pair-specific code");
+        assertEquals(1, disabledUsers(member),
+                "the refused second call did not touch the account state again");
+    }
+
+    /**
+     * Security negative: the pair is checked <b>before</b> deactivation. Targeting a unit the
+     * subject is not in must not disable the account.
+     */
+    @Test
+    void removingFromTheWrongUnitIsA404AndDoesNotDeactivateTheSubject() {
+        UUID root = insertUnit(null, "root-" + suffix, null, 0);
+        UUID first = insertUnit(root, "first-" + suffix, rootPathOf(root), 1);
+        UUID second = insertUnit(root, "second-" + suffix, rootPathOf(root), 1);
+        jdbc.update("INSERT INTO org_unit_members (org_unit_id, member_kind, member_id)"
+                + " VALUES (?, 'human', ?)", first, member);
+        grant(caller, OrgUnitMemberService.MANAGE_MEMBERS_ATOM);
+        TenantContext.setUserId(caller.toString());
+
+        int auditBefore = auditCount(OrgUnitMemberService.REMOVED_AUDIT_EVENT);
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> memberService.remove(second.toString(), member.toString(), "human"));
+        assertEquals(HttpStatus.NOT_FOUND, refused.getStatus());
+        assertEquals("ORG_UNIT_MEMBER_NOT_FOUND", refused.getCode());
+        assertEquals(first, unitOf("human", member), "the subject is still in its real unit");
+        assertEquals(0, disabledUsers(member), "the account was NOT disabled by the wrong-unit call");
+        assertEquals(auditBefore, auditCount(OrgUnitMemberService.REMOVED_AUDIT_EVENT),
+                "a refused remove writes no deactivation audit row");
+    }
+
+    @Test
+    void removingAnAgentPrincipalDisablesThePrincipalInsteadOfFreeingIt() {
+        UUID root = insertUnit(null, "root-" + suffix, null, 0);
+        UUID unit = insertUnit(root, "unit-" + suffix, rootPathOf(root), 1);
+        UUID agentId = insertAgentPrincipal();
+        jdbc.update("INSERT INTO org_unit_members (org_unit_id, member_kind, member_id)"
+                + " VALUES (?, 'agent_principal', ?)", unit, agentId);
+        jdbc.update("INSERT INTO org_unit_members (org_unit_id, member_kind, member_id)"
+                + " VALUES (?, 'human', ?)", unit, caller);
+        grant(caller, OrgUnitMemberService.MANAGE_MEMBERS_ATOM);
+        TenantContext.setUserId(caller.toString());
+
+        memberService.remove(unit.toString(), agentId.toString(), "agent_principal");
+
+        assertNull(unitOf("agent_principal", agentId), "the membership row is gone");
+        assertEquals(0, membershipRows("agent_principal", agentId));
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM agent_principals WHERE id = ? AND disabled_at IS NOT NULL",
+                Integer.class, agentId), "disabled_at is the traceable deactivation marker");
+    }
+
+    /**
+     * The invariant that matters, stated as a disjunction so it holds for both legal exits:
+     * after either exit a subject is either still in exactly one unit, or deactivated. Nothing can
+     * produce "active and in no unit".
+     */
+    @Test
+    void moveAndRemoveAreTheOnlyExitsAndNeitherLeavesAnActiveSubjectOutsideTheOrg() {
+        UUID root = insertUnit(null, "root-" + suffix, null, 0);
+        UUID first = insertUnit(root, "first-" + suffix, rootPathOf(root), 1);
+        UUID second = insertUnit(root, "second-" + suffix, rootPathOf(root), 1);
+        jdbc.update("INSERT INTO org_unit_members (org_unit_id, member_kind, member_id)"
+                + " VALUES (?, 'human', ?)", first, member);
+        grant(caller, OrgUnitMemberService.MANAGE_MEMBERS_ATOM);
+        TenantContext.setUserId(caller.toString());
+
+        memberService.move(second.toString(), member.toString(), "human", true);
+        assertEquals(second, unitOf("human", member), "after a move the subject is in exactly one unit");
+        assertEquals(0, disabledUsers(member), "and the account is still active");
+
+        memberService.remove(second.toString(), member.toString(), "human");
+        assertEquals(0, membershipRows("human", member), "after a remove the subject is in no unit");
+        assertEquals(1, disabledUsers(member), "because it is deactivated instead");
+        assertEquals(0, activeMemberships("human", member),
+                "the invariant: active membership exists for every active subject");
     }
 
     @Test
@@ -298,9 +396,44 @@ class OrgUnitMemberServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     private int auditCount() {
+        return auditCount(OrgUnitMemberService.AUDIT_EVENT);
+    }
+
+    private int auditCount(String action) {
         Integer count = jdbc.queryForObject("SELECT count(*) FROM audit_logs WHERE action = ?",
-                Integer.class, OrgUnitMemberService.AUDIT_EVENT);
+                Integer.class, action);
         return count == null ? 0 : count;
+    }
+
+    private int membershipRows(String kind, UUID memberId) {
+        Integer count = jdbc.queryForObject("SELECT count(*) FROM org_unit_members"
+                + " WHERE member_kind = ? AND member_id = ?", Integer.class, kind, memberId);
+        return count == null ? 0 : count;
+    }
+
+    private int activeMemberships(String kind, UUID memberId) {
+        Integer count = jdbc.queryForObject("SELECT count(*) FROM org_unit_members m"
+                + " WHERE m.member_kind = ? AND m.member_id = ?"
+                + " AND (m.member_kind <> 'human' OR EXISTS (SELECT 1 FROM users u"
+                + " WHERE u.id = m.member_id AND u.status = 'ACTIVE' AND u.deleted_at IS NULL))"
+                + " AND (m.member_kind <> 'agent_principal' OR EXISTS (SELECT 1 FROM agent_principals p"
+                + " WHERE p.id = m.member_id AND p.disabled_at IS NULL))",
+                Integer.class, kind, memberId);
+        return count == null ? 0 : count;
+    }
+
+    private int disabledUsers(UUID userId) {
+        Integer count = jdbc.queryForObject("SELECT count(*) FROM users"
+                + " WHERE id = ? AND status = 'DISABLED' AND deleted_at IS NOT NULL",
+                Integer.class, userId);
+        return count == null ? 0 : count;
+    }
+
+    private UUID insertAgentPrincipal() {
+        var principal = TestAgentPrincipals.newUserAgentPrincipal();
+        principal.setName("agent-" + suffix);
+        principal.setCreatedByUserId(caller.toString());
+        return principals.save(principal).getId();
     }
 
     private String latestAuditDetail() {

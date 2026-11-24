@@ -105,6 +105,20 @@ public class OrgUnitController {
         return writeService.move(unitId, body.parentId());
     }
 
+    /**
+     * R32 (task-956): delete an empty unit. A unit with direct children or members is a
+     * {@code 409} carrying both counts in the problem body — the caller has to see the impact
+     * before deciding, rather than learn that a whole subtree disappeared in one click. The
+     * unit's preset bindings cascade with it (they are configuration of that unit); the audit
+     * row records their ids before the cascade.
+     */
+    @PreAuthorize("isAuthenticated()")
+    @DeleteMapping("/{unitId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable String unitId) {
+        writeService.delete(unitId);
+    }
+
     @PreAuthorize("isAuthenticated()")
     @PutMapping("/{unitId}/members/{memberId}")
     public ResponseEntity<OrgUnitWireView.MemberMoved> moveMember(
@@ -121,6 +135,8 @@ public class OrgUnitController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void removeMember(@PathVariable String unitId, @PathVariable String memberId,
                              @RequestParam String memberKind) {
+        // R31: this deactivates the subject (soft delete / disabled), not just the membership
+        // row; see OrgUnitMemberService.remove for the MVP ruling (task-956).
         memberService.remove(unitId, memberId, memberKind);
     }
 

@@ -7192,6 +7192,36 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { description: 'ORG_UNIT_NOT_FOUND — unknown or not visible', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { description: 'ORG_UNIT_NAME_CONFLICT — a sibling already uses this name', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    delete:
+      tags: [admin]
+      operationId: deleteOrgUnit
+      summary: Delete an empty org unit (refused when it has children or members)
+      security: [{ bearerAuth: [] }]
+      description: |
+        R32 (task-956). Deletes one **empty** org unit. "Empty" is judged twice: the service counts
+        direct children and members and answers `409` with both counts before anything is written,
+        and the database keeps its own veto (`parent_id` and `org_unit_members` are
+        `ON DELETE RESTRICT`, V163/V164), so a child or member added concurrently is still refused
+        (translated back to `409 ORG_UNIT_NOT_EMPTY`).
+
+        **Cascade contract, stated rather than implied**: nothing under the unit is deleted
+        silently. Children and members are a refusal, never a cascade — a unit delete must not
+        take a subtree or people's membership with it. `org_unit_preset_bindings` **is** cascaded
+        (V166 `ON DELETE CASCADE`): a preset binding is configuration of the unit itself and has
+        no meaning once the unit id is gone. The audit row (`org_unit_deleted`) records the unit's
+        name/parent/depth and the preset ids that went with it, written in the same transaction.
+
+        Gates: the same scope resolution as the rest of the tree (`404` for a non-member; `403` for
+        a member without `MANAGE_ORG_UNITS`) — the atom is the existing one, no new permission.
+      parameters:
+        - { in: path, name: unitId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 'Deleted; the unit''s preset bindings were removed with it' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — no MANAGE_ORG_UNITS within the caller''s scope', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'ORG_UNIT_NOT_FOUND — unknown or not visible', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'ORG_UNIT_HAS_CHILDREN / ORG_UNIT_HAS_MEMBERS / ORG_UNIT_NOT_EMPTY — the problem body carries `childCount` and `memberCount`; nothing was deleted', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/org-units/{unitId}/parent:
     put:
       tags: [admin]
@@ -7258,13 +7288,20 @@ paths:
     delete:
       tags: [admin]
       operationId: removeOrgUnitMember
-      summary: Remove one human/agent from an org unit
+      summary: Deactivate one human/agent and remove it from its org unit
       security: [{ bearerAuth: [] }]
       description: |
-        PLAN-0773 M2-11 (batch C; D-1115). Deletes the `org_unit_members` row; the subject keeps
-        every grant it holds through other subjects (bindings are never rewritten here). Gates:
-        scope + `MANAGE_ORG_UNIT_MEMBERS`. Removing a member who is not in this unit is
-        `404 ORG_UNIT_MEMBER_NOT_FOUND` (the pair is the identity), not a silent 204.
+        PLAN-0773 M2-11 (batch C; D-1115) **revised by R31 (task-956)**: the MVP has no
+        free-floating member, so this endpoint is **deactivation**, not a bare membership delete.
+        The subject is soft-deleted/disabled (`users.deleted_at` + `users.status = DISABLED` for a
+        human, both credential epochs bumped in the same transaction; `agent_principals.disabled_at`
+        for an agent principal) and **all** of its `org_unit_members` rows disappear. The account
+        row stays for traceability. Other grants and bindings are never rewritten here.
+
+        Gates: scope + `MANAGE_ORG_UNIT_MEMBERS`. The membership pair is checked **before**
+        deactivation: a subject that is not in this unit is `404 ORG_UNIT_MEMBER_NOT_FOUND` and its
+        account is **not** disabled. A successful call writes the durable
+        `org_membership_deactivated` audit row in the same transaction.
       parameters:
         - { in: path, name: unitId, required: true, schema: { type: string, format: uuid } }
         - { in: path, name: memberId, required: true, schema: { type: string, format: uuid } }

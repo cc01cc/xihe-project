@@ -232,6 +232,114 @@ class OrgUnitWriteServiceIntegrationTest extends AbstractIntegrationTest {
                 () -> writeService.rename(unit.id().toString(), "other-" + suffix)).getCode());
     }
 
+    // ------------------------------------------------------------------ delete (R32)
+
+    @Test
+    void deletingAnEmptyUnitRemovesItWritesTheAuditRowAndTheReadFaceIsA404() {
+        grant(caller, OrgUnitWriteService.MANAGE_ATOM);
+        grant(caller, OrgUnitReadService.READ_ATOM);
+        TenantContext.setUserId(caller.toString());
+        OrgUnitWireView.Created root = writeService.create("root-" + suffix, null);
+        OrgUnitWireView.Created child = writeService.create("child-" + suffix, root.id().toString());
+
+        int auditBefore = auditCount(OrgUnitWriteService.DELETE_AUDIT_EVENT);
+        writeService.delete(child.id().toString());
+
+        assertEquals(0, unitRows(child.id()), "the unit row is gone");
+        assertEquals(1, countUnits(), "only the root remains");
+        assertEquals(auditBefore + 1, auditCount(OrgUnitWriteService.DELETE_AUDIT_EVENT),
+                "R32 writes a durable audit row, not only a log line");
+        CpApiException read = assertThrows(CpApiException.class,
+                () -> readService.members(child.id().toString(), false));
+        assertEquals(HttpStatus.NOT_FOUND, read.getStatus(), "the read face answers 404 after delete");
+        assertEquals("ORG_UNIT_NOT_FOUND", read.getCode());
+    }
+
+    @Test
+    void deletingAUnitWithChildrenIsA409ThatNamesBothCountsAndChangesNothing() {
+        grant(caller, OrgUnitWriteService.MANAGE_ATOM);
+        TenantContext.setUserId(caller.toString());
+        OrgUnitWireView.Created root = writeService.create("root-" + suffix, null);
+        writeService.create("child-" + suffix, root.id().toString());
+
+        int unitsBefore = countUnits();
+        int auditBefore = auditCount(OrgUnitWriteService.DELETE_AUDIT_EVENT);
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> writeService.delete(root.id().toString()));
+
+        assertEquals(HttpStatus.CONFLICT, refused.getStatus(),
+                "a unit with children is refused, never silently cascade-deleted");
+        assertEquals("ORG_UNIT_HAS_CHILDREN", refused.getCode());
+        assertEquals(1, refused.getExtra().get("childCount"),
+                "the refusal carries the impact surface, not just a sentence");
+        assertEquals(0, refused.getExtra().get("memberCount"));
+        assertEquals(unitsBefore, countUnits(), "the refusal wrote nothing");
+        assertEquals(auditBefore, auditCount(OrgUnitWriteService.DELETE_AUDIT_EVENT),
+                "and no delete audit row exists");
+    }
+
+    @Test
+    void deletingAUnitWithMembersIsA409ThatNamesBothCountsAndChangesNothing() {
+        grant(caller, OrgUnitWriteService.MANAGE_ATOM);
+        TenantContext.setUserId(caller.toString());
+        OrgUnitWireView.Created root = writeService.create("root-" + suffix, null);
+        OrgUnitWireView.Created unit = writeService.create("unit-" + suffix, root.id().toString());
+        UUID member = insertUser("member");
+        jdbc.update("INSERT INTO org_unit_members (org_unit_id, member_kind, member_id)"
+                + " VALUES (?, 'human', ?)", unit.id(), member);
+
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> writeService.delete(unit.id().toString()));
+
+        assertEquals(HttpStatus.CONFLICT, refused.getStatus());
+        assertEquals("ORG_UNIT_HAS_MEMBERS", refused.getCode(),
+                "a unit with members is refused even when it has no children");
+        assertEquals(0, refused.getExtra().get("childCount"));
+        assertEquals(1, refused.getExtra().get("memberCount"));
+        assertEquals(1, unitRows(unit.id()), "the unit is still there");
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM org_unit_members"
+                + " WHERE org_unit_id = ?", Integer.class, unit.id()), "and so is the membership");
+    }
+
+    /** The database remains the veto: a caller that skips the service still cannot cascade-delete. */
+    @Test
+    void theDatabaseRefusesDeletingANonEmptyUnitEvenWhenTheServiceCheckIsBypassed() {
+        grant(caller, OrgUnitWriteService.MANAGE_ATOM);
+        TenantContext.setUserId(caller.toString());
+        OrgUnitWireView.Created root = writeService.create("root-" + suffix, null);
+        writeService.create("child-" + suffix, root.id().toString());
+
+        DataAccessException refused = assertThrows(DataAccessException.class,
+                () -> jdbc.update("DELETE FROM org_units WHERE id = ?", root.id()));
+        Throwable cause = refused.getMostSpecificCause();
+        assertEquals("23503", ((java.sql.SQLException) cause).getSQLState(),
+                "V163 ON DELETE RESTRICT refuses the delete inside PostgreSQL");
+        assertEquals(2, countUnits(), "nothing was removed");
+    }
+
+    @Test
+    void deletingAnEmptyUnitCascadesItsPresetBindingsAndNamesThemInTheAudit() {
+        grant(caller, OrgUnitWriteService.MANAGE_ATOM);
+        TenantContext.setUserId(caller.toString());
+        OrgUnitWireView.Created root = writeService.create("root-" + suffix, null);
+        OrgUnitWireView.Created unit = writeService.create("unit-" + suffix, root.id().toString());
+        UUID presetId = jdbc.queryForObject("SELECT id FROM grant_presets LIMIT 1", UUID.class);
+        UUID bindingId = UUID.randomUUID();
+        jdbc.update("INSERT INTO org_unit_preset_bindings (id, org_unit_id, role_id, granted_by)"
+                + " VALUES (?, ?, ?, ?)", bindingId, unit.id(), presetId, caller);
+
+        writeService.delete(unit.id().toString());
+
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM org_unit_preset_bindings"
+                + " WHERE org_unit_id = ?", Integer.class, unit.id()),
+                "preset bindings cascade with the unit (V166) — the one explicit cascade");
+        String detail = jdbc.queryForObject("SELECT details FROM audit_logs WHERE action = ?"
+                + " ORDER BY created_at DESC, id DESC LIMIT 1", String.class,
+                OrgUnitWriteService.DELETE_AUDIT_EVENT);
+        assertTrue(detail.contains(presetId.toString()),
+                "the audit row names the preset binding that the cascade removed");
+    }
+
     // ------------------------------------------------------------------ authorization
 
     @Test
@@ -251,6 +359,9 @@ class OrgUnitWriteServiceIntegrationTest extends AbstractIntegrationTest {
                 () -> writeService.rename(unitId.toString(), "x-" + suffix)).getCode());
         assertEquals("ORG_UNIT_NOT_FOUND", assertThrows(CpApiException.class,
                 () -> writeService.move(unitId.toString(), null)).getCode());
+        assertEquals("ORG_UNIT_NOT_FOUND", assertThrows(CpApiException.class,
+                () -> writeService.delete(unitId.toString())).getCode(),
+                "the delete face uses the same scope-first order (404, not 403)");
         assertEquals(1, countUnits(), "none of the refusals wrote anything");
     }
 
@@ -267,6 +378,11 @@ class OrgUnitWriteServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.FORBIDDEN, refused.getStatus(),
                 "a member holds the read atom but not MANAGE_ORG_UNITS");
         assertEquals("FORBIDDEN", refused.getCode());
+        CpApiException deleteRefused = assertThrows(CpApiException.class,
+                () -> writeService.delete(unitId.toString()));
+        assertEquals(HttpStatus.FORBIDDEN, deleteRefused.getStatus());
+        assertEquals("FORBIDDEN", deleteRefused.getCode(),
+                "the delete uses the existing MANAGE_ORG_UNITS atom, not a new permission");
     }
 
     @Test
@@ -325,6 +441,18 @@ class OrgUnitWriteServiceIntegrationTest extends AbstractIntegrationTest {
 
     private int countUnits() {
         Integer count = jdbc.queryForObject("SELECT count(*) FROM org_units", Integer.class);
+        return count == null ? 0 : count;
+    }
+
+    private int unitRows(UUID unitId) {
+        Integer count = jdbc.queryForObject("SELECT count(*) FROM org_units WHERE id = ?",
+                Integer.class, unitId);
+        return count == null ? 0 : count;
+    }
+
+    private int auditCount(String action) {
+        Integer count = jdbc.queryForObject("SELECT count(*) FROM audit_logs WHERE action = ?",
+                Integer.class, action);
         return count == null ? 0 : count;
     }
 
