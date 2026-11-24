@@ -21,6 +21,17 @@ public class OrgUnitMemberRepository {
 
     private static final String WS_OWNER = "WS_OWNER";
 
+    /** The two legal {@code org_unit_members.member_kind} values (V164 CHECK). */
+    public static final String KIND_HUMAN = "human";
+    public static final String KIND_AGENT_PRINCIPAL = "agent_principal";
+
+    /**
+     * R25/R29 (task-960): one row of the "add a member" candidate read face. {@code memberKind} is
+     * carried so a caller can merge the two subject tables into one picker without having to know
+     * which table a row came from.
+     */
+    public record CandidateRow(String memberKind, UUID memberId, String displayName) {}
+
     private final JdbcTemplate jdbc;
 
     public OrgUnitMemberRepository(JdbcTemplate jdbc) {
@@ -52,6 +63,61 @@ public class OrgUnitMemberRepository {
         return jdbc.update("DELETE FROM org_unit_members"
                 + " WHERE member_kind = ? AND member_id = ? AND org_unit_id = ?",
                 memberKind, memberId, unitId) > 0;
+    }
+
+    /**
+     * R25/R29 (task-960): the only subjects that may be offered for the "add a member" action --
+     * <b>those that belong to no unit at all</b>.
+     *
+     * <p>The invariant is {@code candidates ∩ members(whole tree) == ∅}: the query filters with
+     * {@code NOT EXISTS} against {@code org_unit_members}, not against the unit being edited. A
+     * subject sitting in a descendant (or any other) unit is "already in the org", and moving it to
+     * this unit is the {@code move} face -- offering it here as if it were new would let a caller
+     * add the same person twice. This is the server-side judgement; a client that filters a broader
+     * user/principal list itself would reproduce the same bug the moment a new list face forgets
+     * the rule.</p>
+     *
+     * <p>Disabled subjects are excluded because the write face refuses them
+     * ({@code status = DISABLED}/{@code deleted_at} for humans, {@code disabled_at} for principals);
+     * a candidate row is meant to be a row {@code move} will accept. {@code query} is a
+     * case-insensitive display-name search, nullable; it only narrows the set, never widens it.</p>
+     *
+     * <p>The MVP has no free-floating member (R27, task-956), so a subject that is deactivated is
+     * also not a candidate: it has no unit to return to and cannot be re-added while disabled.</p>
+     */
+    public List<CandidateRow> findUnassignedCandidates(String memberKind, String query) {
+        String like = query == null || query.isBlank()
+                ? null
+                : "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+        if (KIND_HUMAN.equals(memberKind)) {
+            return jdbc.query(
+                    "SELECT 'human' AS member_kind, u.id AS member_id,"
+                            + " COALESCE(NULLIF(TRIM(u.username), ''), u.email, u.name) AS display_name"
+                            + " FROM users u"
+                            + " WHERE u.status = 'ACTIVE' AND u.deleted_at IS NULL"
+                            + " AND NOT EXISTS (SELECT 1 FROM org_unit_members m"
+                            + " WHERE m.member_kind = 'human' AND m.member_id = u.id)"
+                            + " AND (?::text IS NULL OR COALESCE(NULLIF(TRIM(u.username), ''), u.email, u.name)"
+                            + " ILIKE ?::text ESCAPE '\\')"
+                            + " ORDER BY display_name, u.id",
+                    (rs, i) -> new CandidateRow(rs.getString("member_kind"),
+                            rs.getObject("member_id", UUID.class), rs.getString("display_name")),
+                    like, like);
+        }
+        if (KIND_AGENT_PRINCIPAL.equals(memberKind)) {
+            return jdbc.query(
+                    "SELECT 'agent_principal' AS member_kind, p.id AS member_id, p.name AS display_name"
+                            + " FROM agent_principals p"
+                            + " WHERE p.disabled_at IS NULL"
+                            + " AND NOT EXISTS (SELECT 1 FROM org_unit_members m"
+                            + " WHERE m.member_kind = 'agent_principal' AND m.member_id = p.id)"
+                            + " AND (?::text IS NULL OR p.name ILIKE ?::text ESCAPE '\\')"
+                            + " ORDER BY p.name, p.id",
+                    (rs, i) -> new CandidateRow(rs.getString("member_kind"),
+                            rs.getObject("member_id", UUID.class), rs.getString("display_name")),
+                    like, like);
+        }
+        throw new IllegalArgumentException("unknown org_unit_members.member_kind: '" + memberKind + "'");
     }
 
     /**
