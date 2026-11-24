@@ -67,9 +67,15 @@ const mode = ref<WriteMode | null>(null),
     memberKind = ref<ApiOrgUnitMember["memberKind"]>("human"),
     subjectQuery = ref(""),
     subjectOptions = ref<Array<{ id: string; label: string }>>([]),
+    subjectLabels = ref<Record<string, string>>({}),
     subjectLoading = ref(false),
     subjectError = ref(""),
-    subjectId = ref(""),
+    /** R23（task-954）：成员可多选 —— 复选框绑定该数组，提交时逐个落位。 */
+    subjectIds = ref<string[]>([]),
+    /** R28（task-954）：写入前先显式确认一次，文案承诺的「需要你确认」必须真的发生。 */
+    addConfirmPending = ref(false),
+    /** 409 确认门期间暂存的剩余待放置主体；确认成功后接着逐个写入。 */
+    addQueueRest = ref<string[]>([]),
     roleCatalog = ref<ApiPreset[]>([]),
     roleLoading = ref(false),
     roleError = ref(""),
@@ -122,6 +128,11 @@ const currentRoleNames = computed(() => {
     return current.map((id) => roleCatalog.value.find((role) => role.id === id)?.displayName ?? id);
 });
 
+/** R23：已选主体清单（标签跟着选择记，搜索换页后不会退回裸 id）。 */
+const selectedSubjects = computed(() =>
+    subjectIds.value.map((id) => ({ id, label: subjectLabels.value[id] ?? id })),
+);
+
 const movePending = computed(() => writes.pendingMove.value);
 const removalPending = computed(() => writes.pendingRemoval.value);
 const busy = computed(() => writes.busy.value);
@@ -133,8 +144,11 @@ function resetTransient(): void {
     memberKind.value = "human";
     subjectQuery.value = "";
     subjectOptions.value = [];
+    subjectLabels.value = {};
     subjectError.value = "";
-    subjectId.value = "";
+    subjectIds.value = [];
+    addConfirmPending.value = false;
+    addQueueRest.value = [];
     roleAddId.value = "";
     removeCandidates.value = [];
     removeError.value = "";
@@ -145,13 +159,11 @@ function resetTransient(): void {
     writes.closeMemberRemovalConfirmation();
 }
 
-function requiresUnit(target: WriteMode): boolean {
-    return target !== "create";
-}
-
 async function open(target: WriteMode): Promise<void> {
     resetTransient();
-    if (requiresUnit(target) && !props.unit) {
+    // R22（task-954）：toolbar 入口在没有选中单元时一律禁用；这里只防程序化调用。
+    // `create` 例外是为了让「父单元：顶层」这一态可见（提交仍被 `!unit` 挡住，不发必然 403 的请求）。
+    if (target !== "create" && !props.unit) {
         noticeOk.value = false;
         notice.value = t("orgMembers.writeNeedsSelection");
         return;
@@ -207,11 +219,20 @@ async function loadRemovableMembers(): Promise<void> {
 async function loadSubjects(): Promise<void> {
     subjectLoading.value = true;
     subjectError.value = "";
-    subjectId.value = "";
     try {
         if (memberKind.value === "agent_principal") {
             const rows = await api.listAgentPrincipals();
-            subjectOptions.value = rows.map((row) => ({ id: row.principalId, label: row.name }));
+            // R23：智能体列表契约没有查询参数 ⇒ 拿到可见全集后本地按名称/ID 过滤；
+            // 不做第二套「谁可见」的判定（能看见的才是列表里的，过滤只缩不放）。
+            const needle = subjectQuery.value.trim().toLowerCase();
+            subjectOptions.value = rows
+                .filter(
+                    (row) =>
+                        !needle ||
+                        row.name.toLowerCase().includes(needle) ||
+                        row.principalId.toLowerCase().includes(needle),
+                )
+                .map((row) => ({ id: row.principalId, label: row.name }));
         } else {
             const rows = await api.listAdminUsers(subjectQuery.value);
             subjectOptions.value = rows.map((row) => ({
@@ -219,6 +240,8 @@ async function loadSubjects(): Promise<void> {
                 label: row.name || row.username || row.email,
             }));
         }
+        // 只合并、不清空：跨查询保留已选项，标签记在本地。
+        for (const row of subjectOptions.value) subjectLabels.value[row.id] = row.label;
     } catch (cause) {
         subjectOptions.value = [];
         subjectError.value =
@@ -233,12 +256,18 @@ async function loadSubjects(): Promise<void> {
 async function submitName(target: "create" | "rename"): Promise<void> {
     const trimmed = name.value.trim();
     if (!trimmed) return;
-    const ok =
-        target === "create"
-            ? await writes.createUnit({ name: trimmed, parentId: props.unit?.id ?? null })
-            : props.unit
-              ? await writes.renameUnit(props.unit.id, trimmed)
-              : false;
+    const unit = props.unit;
+    if (target === "create") {
+        // R22：没有选中单元就没有父单元，建根需要更高权限 ⇒ 不发必然 403 的请求。
+        if (!unit) {
+            noticeOk.value = false;
+            notice.value = t("orgMembers.writeNeedsSelection");
+            return;
+        }
+        if (await writes.createUnit({ name: trimmed, parentId: unit.id })) finish();
+        return;
+    }
+    const ok = unit ? await writes.renameUnit(unit.id, trimmed) : false;
     if (ok) finish();
 }
 
@@ -249,22 +278,77 @@ async function submitMove(): Promise<void> {
     if (await writes.moveUnit(unit.id, parentId)) finish();
 }
 
-async function submitAddMember(): Promise<void> {
+/** R23：切换成员类型时清空已选项 —— human 的 id 不能当 agent_principal 提交。 */
+async function onMemberKindChange(): Promise<void> {
+    subjectIds.value = [];
+    subjectLabels.value = {};
+    await loadSubjects();
+}
+
+/**
+ * R23：多选勾选（不用 `v-model` —— 这格是「主体选择器」，没有共享校验器规则；
+ * 与 `WorkspaceAgentsPanel` 的能力勾选同一形态：`:checked` + `@change`）。
+ */
+function toggleSubject(row: { id: string; label: string }, checked: boolean): void {
+    subjectLabels.value[row.id] = row.label;
+    subjectIds.value = checked
+        ? [...subjectIds.value, row.id]
+        : subjectIds.value.filter((id) => id !== row.id);
+}
+
+/** R28 第一步：只落确认态，不发任何写请求。 */
+function submitAddMember(): void {
+    if (!props.unit || subjectIds.value.length === 0) return;
+    addConfirmPending.value = true;
+}
+
+/**
+ * R23/R28 第二步：确认后逐个落位。契约没有批量端点，所以是 N 个
+ * `PUT …/members/{id}?memberKind=` —— 回执按 N 条调用计（不是一次批量写）。
+ * 任一成员撞 409 就停在确认门，确认成功后从 `addQueueRest` 续跑。
+ */
+async function runAddQueue(ids: string[]): Promise<void> {
     const unit = props.unit;
-    if (!unit || !subjectId.value) return;
-    const picked = subjectOptions.value.find((row) => row.id === subjectId.value);
-    const outcome = await writes.requestMemberMove({
-        unitId: unit.id,
-        memberId: subjectId.value,
-        memberKind: memberKind.value,
-        memberName: picked?.label ?? subjectId.value,
-    });
-    // "needs-confirmation"：409 已经把影响面摊在窗口里 ⇒ 不关窗，等用户按确认。
-    if (outcome === "done") finish();
+    if (!unit) return;
+    const queue = [...ids];
+    while (queue.length > 0) {
+        const memberId = queue[0];
+        const outcome = await writes.requestMemberMove({
+            unitId: unit.id,
+            memberId,
+            memberKind: memberKind.value,
+            memberName: subjectLabels.value[memberId] ?? memberId,
+        });
+        if (outcome === "done") {
+            queue.shift();
+            continue;
+        }
+        if (outcome === "needs-confirmation") {
+            // 409 已经把影响面摊在窗口里 ⇒ 不关窗，等用户按确认。
+            addQueueRest.value = queue.slice(1);
+            return;
+        }
+        // 失败：原文留在屏幕上，剩余队列作废（不让用户在半截状态里继续点）。
+        addQueueRest.value = [];
+        return;
+    }
+    finish();
+}
+
+async function confirmAddMember(): Promise<void> {
+    addConfirmPending.value = false;
+    await runAddQueue(subjectIds.value);
 }
 
 async function confirmMove(): Promise<void> {
-    if (await writes.confirmMemberMove()) finish();
+    if (!(await writes.confirmMemberMove())) return;
+    if (addQueueRest.value.length > 0) {
+        const rest = addQueueRest.value;
+        addQueueRest.value = [];
+        await runAddQueue(rest);
+        return;
+    }
+    finish();
 }
 
 function pickRemoval(member: ApiOrgUnitMember): void {
@@ -381,18 +465,22 @@ defineExpose({ open, openForMember });
 <template>
     <div>
         <div class="flex flex-wrap items-center gap-2" data-testid="org-write-actions">
-            <Button
+            <span
                 v-for="action in WRITE_ACTIONS"
                 :key="action.testid"
-                type="button"
-                variant="outline"
-                size="sm"
-                :data-testid="action.testid"
-                :disabled="requiresUnit(action.mode) && !unit"
-                @click="open(action.mode)"
+                :title="unit ? undefined : t('orgMembers.writeNeedsSelection')"
             >
-                {{ t(action.labelKey) }}
-            </Button>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    :data-testid="action.testid"
+                    :disabled="!unit"
+                    @click="open(action.mode)"
+                >
+                    {{ t(action.labelKey) }}
+                </Button>
+            </span>
             <p class="w-full text-xs text-muted-foreground">{{ t("orgMembers.writeHint") }}</p>
             <p
                 v-if="notice"
@@ -423,6 +511,25 @@ defineExpose({ open, openForMember });
                         />
                     </div>
 
+                    <!-- R20：新建子单元时把「将挂在哪个单元」摆在界面上（只读，不可选） -->
+                    <div
+                        v-if="mode === 'create'"
+                        class="space-y-1"
+                        data-testid="org-write-create-parent"
+                    >
+                        <p class="text-sm">
+                            <span class="text-muted-foreground"
+                                >{{ t("orgMembers.writeParentLabel") }}：</span
+                            >
+                            <span class="font-medium" data-testid="org-write-create-parent-name">
+                                {{ unit ? unit.name : t("orgMembers.writeParentTop") }}
+                            </span>
+                        </p>
+                        <p class="text-xs text-muted-foreground">
+                            {{ t("orgMembers.writeNewUnitDesc") }}
+                        </p>
+                    </div>
+
                     <!-- 搬移：新父单元 -->
                     <div v-if="mode === 'move'" class="space-y-2">
                         <Label for="org-write-parent">{{ t("orgMembers.writeParentLabel") }}</Label>
@@ -450,64 +557,113 @@ defineExpose({ open, openForMember });
 
                     <!-- 加成员：类型 + 主体 -->
                     <template v-if="mode === 'add-member' && !movePending">
-                        <div class="space-y-2">
-                            <Label for="org-write-member-kind">{{
-                                t("orgMembers.writeMemberKindLabel")
-                            }}</Label>
-                            <Select v-model="memberKind" @update:model-value="loadSubjects">
-                                <SelectTrigger
-                                    id="org-write-member-kind"
-                                    data-testid="org-write-member-kind"
+                        <template v-if="!addConfirmPending">
+                            <div class="space-y-2">
+                                <Label for="org-write-member-kind">{{
+                                    t("orgMembers.writeMemberKindLabel")
+                                }}</Label>
+                                <Select
+                                    v-model="memberKind"
+                                    @update:model-value="onMemberKindChange"
                                 >
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="human">{{
-                                        t("orgMembers.kindHuman")
-                                    }}</SelectItem>
-                                    <SelectItem value="agent_principal">
-                                        {{ t("orgMembers.kindAgent") }}
-                                    </SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div class="space-y-2">
-                            <Label for="org-write-search">{{
-                                t("orgMembers.writeSubjectSearch")
-                            }}</Label>
-                            <Input
-                                id="org-write-search"
-                                v-model="subjectQuery"
-                                data-testid="org-write-search"
-                                :disabled="memberKind === 'agent_principal'"
-                                @keyup.enter="loadSubjects"
-                            />
-                        </div>
-                        <div class="max-h-48 space-y-1 overflow-y-auto">
-                            <p v-if="subjectLoading" class="text-xs text-muted-foreground">
-                                {{ t("orgMembers.writeSubjectSearching") }}
-                            </p>
-                            <p v-else-if="subjectError" class="text-xs text-destructive">
-                                {{ subjectError }}
-                            </p>
-                            <p
-                                v-else-if="subjectOptions.length === 0"
-                                class="text-xs text-muted-foreground"
-                            >
-                                {{ t("orgMembers.writeSubjectEmpty") }}
-                            </p>
-                            <label
-                                v-for="row in subjectOptions"
-                                :key="row.id"
-                                class="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-muted"
-                                :data-testid="`org-write-subject-${row.id}`"
-                            >
-                                <input v-model="subjectId" type="radio" :value="row.id" />
-                                <span>{{ row.label }}</span>
-                                <code class="ml-auto font-mono text-[10px] text-muted-foreground">{{
-                                    row.id
-                                }}</code>
-                            </label>
+                                    <SelectTrigger
+                                        id="org-write-member-kind"
+                                        data-testid="org-write-member-kind"
+                                    >
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="human">{{
+                                            t("orgMembers.kindHuman")
+                                        }}</SelectItem>
+                                        <SelectItem value="agent_principal">
+                                            {{ t("orgMembers.kindAgent") }}
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div class="space-y-2">
+                                <Label for="org-write-search">{{
+                                    t("orgMembers.writeSubjectSearch")
+                                }}</Label>
+                                <Input
+                                    id="org-write-search"
+                                    v-model="subjectQuery"
+                                    data-testid="org-write-search"
+                                    :placeholder="
+                                        memberKind === 'agent_principal'
+                                            ? `${t('orgMembers.kindAgent')} · ${t('orgMembers.colName')}`
+                                            : t('orgMembers.writeSubjectSearch')
+                                    "
+                                    @keyup.enter="loadSubjects"
+                                />
+                                <p
+                                    v-if="memberKind === 'agent_principal'"
+                                    class="text-xs text-muted-foreground"
+                                >
+                                    {{ t("orgMembers.writeSubjectAgents") }}
+                                </p>
+                            </div>
+                            <div class="max-h-48 space-y-1 overflow-y-auto">
+                                <p v-if="subjectLoading" class="text-xs text-muted-foreground">
+                                    {{ t("orgMembers.writeSubjectSearching") }}
+                                </p>
+                                <p v-else-if="subjectError" class="text-xs text-destructive">
+                                    {{ subjectError }}
+                                </p>
+                                <p
+                                    v-else-if="subjectOptions.length === 0"
+                                    class="text-xs text-muted-foreground"
+                                >
+                                    {{ t("orgMembers.writeSubjectEmpty") }}
+                                </p>
+                                <label
+                                    v-for="row in subjectOptions"
+                                    :key="row.id"
+                                    class="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-muted"
+                                    :data-testid="`org-write-subject-${row.id}`"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        :checked="subjectIds.includes(row.id)"
+                                        @change="
+                                            toggleSubject(
+                                                row,
+                                                ($event.target as HTMLInputElement).checked,
+                                            )
+                                        "
+                                    />
+                                    <span>{{ row.label }}</span>
+                                    <code
+                                        class="ml-auto font-mono text-[10px] text-muted-foreground"
+                                        >{{ row.id }}</code
+                                    >
+                                </label>
+                            </div>
+                        </template>
+
+                        <!-- R28：提交前显式确认（文案承诺的「需要你确认」必须真的发生） -->
+                        <div v-else class="space-y-2" data-testid="org-write-add-confirm-panel">
+                            <Alert>
+                                <AlertTitle>{{ t("orgMembers.writeAddMember") }}</AlertTitle>
+                                <AlertDescription>
+                                    {{ t("orgMembers.writeAddMemberDesc") }}
+                                </AlertDescription>
+                            </Alert>
+                            <ul class="space-y-1 text-sm" data-testid="org-write-add-confirm-list">
+                                <li
+                                    v-for="row in selectedSubjects"
+                                    :key="row.id"
+                                    class="flex items-center gap-2 rounded bg-muted px-2 py-1"
+                                    :data-testid="`org-write-add-confirm-${row.id}`"
+                                >
+                                    <span>{{ row.label }}</span>
+                                    <code
+                                        class="ml-auto font-mono text-[10px] text-muted-foreground"
+                                        >{{ row.id }}</code
+                                    >
+                                </li>
+                            </ul>
                         </div>
                     </template>
 
@@ -749,7 +905,7 @@ defineExpose({ open, openForMember });
                         v-if="mode === 'create' || mode === 'rename'"
                         type="button"
                         data-testid="org-write-submit"
-                        :disabled="busy || !name.trim()"
+                        :disabled="busy || !name.trim() || (mode === 'create' && !unit)"
                         @click="submitName(mode)"
                     >
                         <LoaderCircle v-if="busy" class="mr-1 h-3 w-3 animate-spin" />
@@ -777,10 +933,19 @@ defineExpose({ open, openForMember });
                             }}
                         </Button>
                         <Button
+                            v-else-if="addConfirmPending"
+                            type="button"
+                            data-testid="org-write-add-confirm"
+                            :disabled="busy"
+                            @click="confirmAddMember"
+                        >
+                            {{ busy ? t("orgMembers.writeBusy") : t("common.confirm") }}
+                        </Button>
+                        <Button
                             v-else
                             type="button"
                             data-testid="org-write-submit"
-                            :disabled="busy || !subjectId"
+                            :disabled="busy || subjectIds.length === 0"
                             @click="submitAddMember"
                         >
                             {{ busy ? t("orgMembers.writeBusy") : t("orgMembers.writeSubmit") }}
