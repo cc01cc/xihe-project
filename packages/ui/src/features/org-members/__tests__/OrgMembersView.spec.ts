@@ -79,24 +79,20 @@ function happyHandler(url: URL) {
 }
 
 /**
- * 面板替身：task-135 起页面用 embedded + #heading 插槽给标题（去重后页面上只剩一处
- * 「智能体主体」），故 stub 必须**渲染 heading 插槽**才能钉住标题落点；
- * 旧的 true 形态浅 stub 会把插槽内容整块吞掉（改后第一次跑就是
- * Unable to get [data-testid=org-members-agents-title]）。
+ * task-1010：本页不再挂 `AgentPrincipalsPanel`，只留一个 `RouterLink` 去实例设置
+ * 「平台智能体」页。jsdom 里没有 router 注入 ⇒ 用透传属性的 `<a>` 替身，
+ * 断言落在目标 route、可见文案与 href 三件事上，而不是替身自己的实现。
  */
-const panelStub = {
-    name: "AgentPrincipalsPanel",
-    // 必须声明成 Boolean：数组形式不做布尔转换，`<AgentPrincipalsPanel embedded>` 会传成空串。
-    props: { embedded: { type: Boolean, default: false } },
-    template: '<div data-testid="agent-principals-panel-stub"><slot name="heading" /></div>',
+const routerLinkStub = {
+    name: "RouterLink",
+    props: { to: { type: [Object, String], required: true } },
+    template: "<a><slot /></a>",
 };
 
 async function mountView() {
     const { default: OrgMembersView } = await import("../pages/OrgMembersView.vue");
     const wrapper = mount(OrgMembersView, {
-        // task-91：成员页现在承载个人智能体主体的落点。面板自己有取数面与判据，
-        // 本文件只钉「落点挂上了」——它的请求不该混进本文件对 happyHandler 的调用清单。
-        global: { plugins: [i18n], stubs: { AgentPrincipalsPanel: panelStub } },
+        global: { plugins: [i18n], stubs: { RouterLink: routerLinkStub } },
         attachTo: document.body,
     });
     await flushPromises();
@@ -122,21 +118,31 @@ beforeEach(() => {
     orgUnitNames.value = new Map();
 });
 
-describe("OrgMembersView — 个人智能体主体落点（task-91）", () => {
-    it("成员页承载个人智能体主体：段标题 + 面板挂载", async () => {
+describe("OrgMembersView — 智能体主体区块移除、只留设置入口（task-1010）", () => {
+    it("负断言：页面不再渲染独立的「智能体主体」标题、列表与面板", async () => {
         mockFetch(happyHandler);
         const wrapper = await mountView();
-        const section = wrapper.get('[data-testid="org-members-agents"]');
-        expect(section.get('[data-testid="org-members-agents-title"]').text()).toBe("智能体主体");
-        // 面板本体（取数、创建门）的判据在 components/settings/__tests__/AgentPrincipalsPanel.spec.ts。
-        const panel = section.findComponent({ name: "AgentPrincipalsPanel" });
-        expect(panel.exists()).toBe(true);
-        // task-135 J4（用户报障「标题出现两次」）：面板改成 embedded 后不再自渲染 eyebrow + h1，
-        // 标题只由页面 #heading 插槽给 ⇒ 整页可见文本里「智能体主体」必须只出现一次。
-        expect((wrapper.text().match(/智能体主体/g) ?? []).length).toBe(1);
-        expect(panel.props("embedded")).toBe(true);
-        // 插槽里保留了描述行（去重不是删信息）。
-        expect(section.text()).toContain(i18n.global.t("agentPrincipals.desc"));
+        // 旧区块的三个落点全部消失：段、标题、面板组件本身。
+        expect(wrapper.find('[data-testid="org-members-agents"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="org-members-agents-title"]').exists()).toBe(false);
+        expect(wrapper.findComponent({ name: "AgentPrincipalsPanel" }).exists()).toBe(false);
+        // 可见文本里也不再有旧区块标题（防「删了 testid 但文案还在」的假移除）。
+        // `settings.ia.resourceAgentPrincipals` 这个键已随本卡删除，故用字面量守一层；
+        // 新入口用的是「平台智能体」，与本断言的旧词不冲突。
+        expect(wrapper.text()).not.toContain("智能体主体");
+        wrapper.unmount();
+    });
+
+    it("正断言：保留一个去「设置 → 平台智能体」的轻量入口", async () => {
+        mockFetch(happyHandler);
+        const wrapper = await mountView();
+        const link = wrapper.get('[data-testid="org-members-agents-link"]');
+        expect(link.text()).toContain(i18n.global.t("settings.instanceResources.agents.title"));
+        expect(link.text()).toContain(i18n.global.t("orgMembers.platformAgentsHint"));
+        // 目标必须是路由名（不是手写路径）：改名/改层段时由 router 解析，链接不会漂成 404。
+        const routerLink = wrapper.findComponent({ name: "RouterLink" });
+        expect(routerLink.exists()).toBe(true);
+        expect(routerLink.props("to")).toEqual({ name: "settings-instance-agent-principals" });
         wrapper.unmount();
     });
 });

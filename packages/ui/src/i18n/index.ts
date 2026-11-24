@@ -168,6 +168,8 @@ export const messages = {
             // `packages/ui/AGENTS.md` 的 atom-denied 口径都要求点名），只把内部术语换成用户话。
             title: "组织成员",
             desc: "按组织架构查看人类成员与智能体。新建、改名、搬移单元，添加或移出成员、修改角色都可以在这里完成；保存失败时会显示原因，并保留你已填写的内容。",
+            // task-1010：本页不再自带「智能体主体」列表，只留一个去实例设置「平台智能体」页的入口。
+            platformAgentsHint: "平台级智能体在设置里统一创建与维护：",
             searchPlaceholder: "在可见组织树内搜索名称…",
             searchEmpty: "没有命中的组织单元。",
             treeEmpty: "当前账号不在任何组织单元中，或组织树为空。",
@@ -2397,8 +2399,8 @@ export const messages = {
             navScopeLabel: "资源导航面板",
             headerLabel: "资源区页头",
             // task-96：`nameAgents`（「智能体」）已删 —— 资源区不再有智能体页（用户裁定
-            // 「智能体是组织成员，不是资源」）。层内名仍在 `settings.ia.resourceAgents`（平台智能体）
-            // 与 `settings.ia.resourceAgentPrincipals`（智能体主体）里，分别被两个新落点复用。
+            // 「智能体是组织成员，不是资源」）。层内名仍在 `settings.ia.resourceAgents`
+            // （平台智能体）里，由设置域实例资源页复用。
             // task-145 / DSD-1511：D-1432 / task-41 的「已迁到工作区设置」指路文案（5 条）连同
             // 指路卡一起删除 —— 已迁层不再出现在页签与说明条，深链静默回落 INSTANCE / USER。
             // task-52 / batch-02 ③：把两条说明压成一条**可折叠摘要**（默认收起）。
@@ -2830,14 +2832,13 @@ export const messages = {
                 groupInstanceResources: "实例资源",
                 groupMyResources: "我的资源",
                 // task-88（用户裁定 A）：实例层叫「平台智能体」，不叫「智能体」也不叫「智能体主体」。
-                // 理由：实例层 = 全平台可用的那些；用户层 = 你个人的主体身份（`resourceAgentPrincipals`）。
+                // 理由：实例层 = 全平台可用的那些；用户层 = 你个人的主体身份（组织成员页承载）。
                 // 改文案不改 key/id —— 别名换名会让 testid 与路由一起漂移，收益为零。
                 resourceAgents: "平台智能体",
                 resourceMcp: "MCP 服务器",
                 resourceCredentials: "凭据",
                 resourceSkills: "技能",
                 resourceKnowledge: "知识库",
-                resourceAgentPrincipals: "智能体主体",
                 resourceMyCredentials: "我的凭据",
                 resourceKnowledgeMcp: "知识库 · MCP",
                 // task-509（T-02）：徽标只说「暂不可用」——曾经直出「后端缺口 G4」，G 码是内部
@@ -4785,6 +4786,8 @@ export const messages = {
         orgMembers: {
             title: "Org members",
             desc: "Browse humans and agent principals by org structure. Create, rename or move units, add or remove members, and change roles here; if saving fails, the reason is shown and your input is kept.",
+            // task-1010: this page no longer embeds the agent-principals list; it only links to settings.
+            platformAgentsHint: "Platform-level agents are created and maintained in settings:",
             searchPlaceholder: "Search names in the visible tree…",
             searchEmpty: "No org unit matched.",
             treeEmpty: "This account belongs to no org unit, or the tree is empty.",
@@ -7495,7 +7498,6 @@ export const messages = {
                 resourceCredentials: "Credentials",
                 resourceSkills: "Skills",
                 resourceKnowledge: "Knowledge bases",
-                resourceAgentPrincipals: "Agent principals",
                 resourceMyCredentials: "My credentials",
                 resourceKnowledgeMcp: "Knowledge base · MCP",
                 backendGapBadgeGeneric: "Unavailable",

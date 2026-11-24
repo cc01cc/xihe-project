@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { RouterLink } from "vue-router";
 import OrgUnitTreePanel from "../components/OrgUnitTreePanel.vue";
 import OrgUnitMemberList from "../components/OrgUnitMemberList.vue";
 import OrgUnitWritePanel from "../components/OrgUnitWritePanel.vue";
-import AgentPrincipalsPanel from "../../../components/settings/AgentPrincipalsPanel.vue";
 import type { ApiOrgUnitMember, ApiOrgUnitNode } from "../../../composables/api";
 import type { OrgWriteKind } from "../composables/useOrgUnitWrites";
 
@@ -92,8 +92,10 @@ function onMemberWrite(mode: "remove-member" | "roles", member: ApiOrgUnitMember
             修法：lg 下给容器一个**确定行高** 420px（卡面允许的下限值），两格各自
             h-full + 内部 overflow-y-auto ⇒ 同高、各自滚；矮屏也不会把两栏挤成一条缝。
             `shrink-0` 是必须的：页面根是 flex 列容器（为了自持滚动），grid 作为 flex item
-            默认 flex-shrink:1，下方智能体段有几十行（实测 3726px）会把它压到 min-height 上
-            —— 首次实测就踩到了：写出 calc(100dvh-19rem)=776px，量到的是 420px（=min-height）。
+            默认 flex-shrink:1；task-135 首次实测时下方智能体主体段有几十行（3726px），
+            把它压到 min-height 上（写出 calc(100dvh-19rem)=776px，量到 420px）。
+            task-1010 已移除该段，但 `lg:shrink-0` 保留：页面根仍是 flex 列容器，将来任何
+            追加的页脚/提示都会重现同一压缩；这条是结构契约，不是给旧段留下的补丁。
             lg 断点以下不设高 ⇒ 单列仍按内容高度，页面滚动即可。
         -->
         <div
@@ -111,38 +113,23 @@ function onMemberWrite(mode: "remove-member" | "roles", member: ApiOrgUnitMember
             </div>
         </div>
         <!--
-            task-91（用户裁定「智能体是组织成员，不是资源」；沿用用户 2026-11-14 ④
-            「智能体个人属于成员管理，并不是在设置域里面」）：个人智能体主体的落点。
+            task-1010（用户 2026-11-24 裁定 A）：组织树 + 成员表 + 详情是成员与智能体的
+            唯一读面，独立「智能体主体」列表与「创建智能体」按钮从本页移除。
 
-            面板仍是 `components/settings/AgentPrincipalsPanel.vue` —— 原先挂在资源区
-            `/resources/agents?layer=USER`，权限门（读面已认证、创建走 `CREATE_OWN_AGENT`）
-            在面板里，与它挂在资源区时逐条相同，本页不加第二道判据。
-
-            标题文案复用既有 i18n 键（「智能体主体」）：迁移不是新概念；键名不写在这里——
-            Vue 开发态保留模板注释，注释里出现真实键名会被 `test-utils/i18nKeys.ts` 的
-            裸键护栏当成渲染结果（实测踩到一次）。键的去留见 task-91 收口。
+            保留的只是一个去实例设置「平台智能体」页的轻量入口：平台级主体的创建、删除
+            与凭据仍属于设置域，本页不再重复承载同一列表（否则两处各自取数、各自分页，
+            用户看到的是两套不完全同步的真相）。
         -->
-        <div class="mx-auto w-full max-w-6xl px-6 pb-8" data-testid="org-members-agents">
-            <!--
-                task-135 J4：面板以 embedded 挂载 ⇒ 它不再自渲染 eyebrow + h1，标题由这里的
-                #heading 插槽给：页面上「智能体主体」只剩**一处**可见文本（h2 保留原 testid），
-                而面板右侧的刷新/创建入口仍在（入口不能随标题一起消失）。
-            -->
-            <div class="mt-3 rounded-md border">
-                <AgentPrincipalsPanel embedded>
-                    <template #heading>
-                        <h2
-                            data-testid="org-members-agents-title"
-                            class="text-lg leading-tight font-semibold tracking-tight"
-                        >
-                            {{ t("settings.ia.resourceAgentPrincipals") }}
-                        </h2>
-                        <p class="mt-1 max-w-3xl text-sm text-muted-foreground">
-                            {{ t("agentPrincipals.desc") }}
-                        </p>
-                    </template>
-                </AgentPrincipalsPanel>
-            </div>
+        <div class="mx-auto w-full max-w-6xl px-6 pb-8" data-testid="org-members-agents-link">
+            <p class="text-sm text-muted-foreground">
+                {{ t("orgMembers.platformAgentsHint") }}
+                <RouterLink
+                    :to="{ name: 'settings-instance-agent-principals' }"
+                    class="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                >
+                    {{ t("settings.instanceResources.agents.title") }}
+                </RouterLink>
+            </p>
         </div>
     </main>
 </template>
