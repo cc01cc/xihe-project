@@ -96,13 +96,17 @@ public class AgentSpawnAuthorizationService {
         PolicyContext context = policy.loadContext(
                 invocation.userId(), invocation.workspaceId(), invocation.parentSessionId());
         List<String> hierarchy = spawnHierarchyResources(invocation, userOnly);
-        boolean allowed = hierarchy.isEmpty()
-                ? policy.allowsByGrant(context, tool, invocation.authorizationBody(),
-                        invocation.parentSessionId(), invocation.userId(), invocation.workspaceId(),
-                        userOnly)
-                : policy.allowsByGrant(context, tool, invocation.authorizationBody(),
-                        invocation.parentSessionId(), invocation.userId(), invocation.workspaceId(),
-                        userOnly, hierarchy);
+        // task-966 / D-1942: the agent (self-spawn) arm AND-s `action:clone` onto the spawn face,
+        // so the atom declared for 分身 is actually evaluated. The human delegation arm
+        // (`userOnly`) passes nothing: human presets never carry `clone`, and requiring it there
+        // would deny every delegation. Both arms still carry the `agent-unit:` hierarchy resource
+        // when the caller has one.
+        List<String> extraActionClasses = userOnly
+                ? List.of()
+                : List.of(ToolFaceRegistry.ACTION_CLONE);
+        boolean allowed = policy.allowsByGrant(context, tool, invocation.authorizationBody(),
+                invocation.parentSessionId(), invocation.userId(), invocation.workspaceId(),
+                userOnly, hierarchy, extraActionClasses);
         if (!allowed) {
             // PLAN-0651 T1.5 (proposal B): the spawn-face denial joins the canonical
             // action_atom_denied stream. The evaluated subject is the caller's user on the human

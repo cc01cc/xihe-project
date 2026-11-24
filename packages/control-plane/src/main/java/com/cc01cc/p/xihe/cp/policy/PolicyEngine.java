@@ -99,6 +99,21 @@ public class PolicyEngine {
     public boolean allowsByGrant(PolicyContext context, String toolName, String body, String sessionId,
                                  String userId, String workspaceId, boolean userPrincipalOnly,
                                  List<String> additionalResources) {
+        return allowsByGrant(context, toolName, body, sessionId, userId, workspaceId,
+                userPrincipalOnly, additionalResources, List.of());
+    }
+
+    /**
+     * task-966 / D-1942: {@code additionalActionClasses} are appended to the face's own action
+     * classes, the same "append, never substitute" shape as {@code additionalResources}. The
+     * self-spawn arm passes {@code clone} here so {@code action:clone} is actually evaluated on
+     * the spawn path; the human delegation arm passes nothing, because human presets do not carry
+     * {@code clone} and requiring it there would deny every delegation.
+     */
+    public boolean allowsByGrant(PolicyContext context, String toolName, String body, String sessionId,
+                                 String userId, String workspaceId, boolean userPrincipalOnly,
+                                 List<String> additionalResources,
+                                 List<String> additionalActionClasses) {
         if (grantAuthorizationService == null || context == null || toolName == null || toolName.isBlank()) {
             return false;
         }
@@ -108,7 +123,8 @@ public class PolicyEngine {
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
         // DSD-1500 R1 (task-115): the request carries every domain the tool touches, not just the
         // face's primary class -- a delete must reach HardGuard as "delete", a move as both.
-        PolicyRequest request = new PolicyRequest(toolName, registry.actionClassesOf(toolName),
+        PolicyRequest request = new PolicyRequest(toolName,
+                mergeActionClasses(registry.actionClassesOf(toolName), additionalActionClasses),
                 mergeResources(
                         declarationResources(toolName, workspaceId, PolicyResourceExtractor.extract(body)),
                         additionalResources),
@@ -158,6 +174,16 @@ public class PolicyEngine {
             return extracted;
         }
         LinkedHashSet<String> merged = new LinkedHashSet<>(extracted);
+        merged.addAll(additional);
+        return List.copyOf(merged);
+    }
+
+    /** task-966: appends extra action classes without dropping the face's own classes. */
+    private static List<String> mergeActionClasses(List<String> declared, List<String> additional) {
+        if (additional == null || additional.isEmpty()) {
+            return declared;
+        }
+        LinkedHashSet<String> merged = new LinkedHashSet<>(declared);
         merged.addAll(additional);
         return List.copyOf(merged);
     }

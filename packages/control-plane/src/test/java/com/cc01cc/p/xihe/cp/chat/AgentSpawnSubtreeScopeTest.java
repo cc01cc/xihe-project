@@ -14,7 +14,9 @@ import static org.mockito.Mockito.when;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
+import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
+import com.cc01cc.p.xihe.cp.policy.PolicyContextProvider;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
@@ -40,8 +42,10 @@ import org.mockito.ArgumentCaptor;
  *
  * <p>The first half pins the kernel: {@code action:spawn × agent-unit:<subtree>} covers self and
  * descendants, rejects siblings and ancestors, and {@code action:clone} is an ordinary AND-ed atom.
- * The second half pins the gate wiring: the caller agent's own unit subtree is appended through the
- * task-870 8-argument overload, so removing that append flips the sibling/ancestor cases red.</p>
+ * The second half pins the gate wiring through the real
+ * {@link AgentSpawnAuthorizationService} rather than a hand-built {@code PolicyRequest}: the caller
+ * agent's own unit subtree and the {@code action:clone} class are appended on the agent arm only, so
+ * removing either append flips the corresponding case red (task-870 / task-966, D-1942).</p>
  */
 class AgentSpawnSubtreeScopeTest {
 
@@ -93,35 +97,42 @@ class AgentSpawnSubtreeScopeTest {
     }
 
     @Test
-    void cloneIsAnOrdinaryAndedAtom() {
-        PolicyRequest request = new PolicyRequest(ChatSubmissionService.SPAWN_TOOL_NAME,
-                List.of(ToolFaceRegistry.ACTION_CLONE), List.of("agent-unit:" + ROOT_TEAM),
-                ToolShape.STRUCTURED, "agent-1", WS, "session");
-        assertTrue(evaluator.allows(request, List.of(Set.of(
-                atom(ToolFaceRegistry.ACTION_CLONE, "agent-unit:" + ROOT_TEAM)))));
-        assertFalse(evaluator.allows(request, List.of(Set.of(
-                atom(ToolFaceRegistry.ACTION_SPAWN_AGENT, "agent-unit:" + ROOT_TEAM)))),
-                "spawn alone must not authorize clone");
+    void agentSpawnRequiresCloneThroughTheRealGate() {
+        // task-966: this used to build a PolicyRequest by hand, which proved the kernel could
+        // handle `clone` but not that the spawn path ever asked for it. The gate is now the
+        // subject: the agent arm must append `clone`, the human delegation arm must not.
+        agentGate();
+        ArgumentCaptor<List<String>> actions = ArgumentCaptor.forClass(List.class);
+        verify(policy).allowsByGrant(any(PolicyContext.class),
+                eq(ChatSubmissionService.SPAWN_TOOL_NAME), anyString(), anyString(),
+                anyString(), anyString(), eq(false), any(), actions.capture());
+        assertEquals(List.of(ToolFaceRegistry.ACTION_CLONE), actions.getValue(),
+                "the self-spawn arm must AND action:clone onto the spawn face");
+    }
+
+    @Test
+    void humanDelegationDoesNotRequireClone() {
+        ChatSubmissionService.SpawnInvocation invocation = invocation("88888888-8888-4888-8888-888888888888");
+        when(policy.allowsByGrant(any(PolicyContext.class), anyString(), anyString(), anyString(),
+                anyString(), anyString(), eq(true), any(), any())).thenReturn(true);
+        service.authorizeUserSpawn(invocation, null);
+        ArgumentCaptor<List<String>> actions = ArgumentCaptor.forClass(List.class);
+        verify(policy).allowsByGrant(any(PolicyContext.class),
+                eq(ChatSubmissionService.SPAWN_TOOL_NAME), anyString(), anyString(),
+                anyString(), anyString(), eq(true), any(), actions.capture());
+        assertTrue(actions.getValue().isEmpty(),
+                "human presets never carry clone; requiring it here would deny every delegation");
     }
 
     @Test
     void gateAppendsTheCallerAgentsOwnSubtreeResource() {
-        ChatSubmissionService.SpawnInvocation invocation = invocation("88888888-8888-4888-8888-888888888888");
-        UUID unit = UUID.randomUUID();
-        when(members.findUnitOf("agent_principal", UUID.fromString(invocation.principalId())))
-                .thenReturn(Optional.of(unit));
-        when(units.findUnit(unit)).thenReturn(Optional.of(
-                new OrgUnitReadRepository.UnitRow(unit, null, "team", null, "root.team", 1)));
-        when(policy.allowsByGrant(any(PolicyContext.class), anyString(), anyString(), anyString(),
-                anyString(), anyString(), eq(false), any())).thenReturn(true);
-
-        service.authorize(invocation, null);
+        ChatSubmissionService.SpawnInvocation invocation = agentGate();
 
         ArgumentCaptor<List<String>> resources = ArgumentCaptor.forClass(List.class);
         verify(policy).allowsByGrant(any(PolicyContext.class),
                 eq(ChatSubmissionService.SPAWN_TOOL_NAME), eq(invocation.authorizationBody()),
                 eq(invocation.parentSessionId()), eq(invocation.userId()),
-                eq(invocation.workspaceId()), eq(false), resources.capture());
+                eq(invocation.workspaceId()), eq(false), resources.capture(), any());
         assertEquals(List.of("agent-unit:root/team"), resources.getValue(),
                 "the ltree path must be projected onto the TREE matcher with `/` separators");
     }
@@ -139,6 +150,24 @@ class AgentSpawnSubtreeScopeTest {
     }
 
     @Test
+    void spawnAndCloneAreTwoAndedAtoms() {
+        // Kernel half of the counter-evidence: once the gate asks for both classes, a grant set
+        // holding only `spawn` (i.e. the agent preset with `action:clone` removed) is denied.
+        PolicyRequest request = new PolicyRequest(ChatSubmissionService.SPAWN_TOOL_NAME,
+                List.of(ToolFaceRegistry.ACTION_SPAWN_AGENT, ToolFaceRegistry.ACTION_CLONE),
+                List.of("agent-unit:" + ROOT_TEAM), ToolShape.STRUCTURED, "agent-1", WS, "session");
+        assertTrue(evaluator.allows(request, List.of(Set.of(
+                atom(ToolFaceRegistry.ACTION_SPAWN_AGENT, "agent-unit:" + ROOT_TEAM),
+                atom(ToolFaceRegistry.ACTION_CLONE, "agent-unit:" + ROOT_TEAM)))));
+        assertFalse(evaluator.allows(request, List.of(Set.of(
+                atom(ToolFaceRegistry.ACTION_SPAWN_AGENT, "agent-unit:" + ROOT_TEAM)))),
+                "spawn alone (no clone) must be denied");
+        assertFalse(evaluator.allows(request, List.of(Set.of(
+                atom(ToolFaceRegistry.ACTION_CLONE, "agent-unit:" + ROOT_TEAM)))),
+                "clone alone (no spawn) must be denied");
+    }
+
+    @Test
     void notificationFacesNeverUseTheSpawnAtom() {
         assertNotEquals(ToolFaceRegistry.ACTION_SPAWN_AGENT,
                 new ToolFaceRegistry().faceOf("team_task_create").actionClass(),
@@ -149,6 +178,30 @@ class AgentSpawnSubtreeScopeTest {
                 "agent-unit is the registered TREE namespace task-935 adds");
         assertEquals(ResourceNamespaces.Matcher.TREE,
                 ResourceNamespaces.find(ResourceNamespaces.AGENT_UNIT).orElseThrow().matcher());
+    }
+
+    @Test
+    void theEngineAppendsCloneWithoutDroppingTheSpawnFace() {
+        // task-966: proves the 9-argument overload merges `clone` into the face's own classes
+        // instead of substituting them, by capturing the PolicyRequest the engine actually hands
+        // to grant evaluation. Without the merge, `spawn_agent`'s class disappears and a caller
+        // holding only clone would silently pass.
+        GrantAuthorizationService grants = mock(GrantAuthorizationService.class);
+        when(grants.allows(any())).thenReturn(true);
+        PolicyEngine engine = new PolicyEngine(mock(AuditLogger.class),
+                mock(PolicyContextProvider.class), grants);
+
+        engine.allowsByGrant(PolicyContext.EMPTY, ChatSubmissionService.SPAWN_TOOL_NAME, "{}",
+                "session", "user-1", WS, false, List.of("agent-unit:" + ROOT_TEAM),
+                List.of(ToolFaceRegistry.ACTION_CLONE));
+
+        ArgumentCaptor<PolicyRequest> request = ArgumentCaptor.forClass(PolicyRequest.class);
+        verify(grants).allows(request.capture());
+        assertTrue(request.getValue().actionClasses().containsAll(
+                List.of(ToolFaceRegistry.ACTION_SPAWN_AGENT, ToolFaceRegistry.ACTION_CLONE)),
+                "clone must be appended to, not substituted for, the spawn face's own class");
+        assertTrue(request.getValue().resources().contains("agent-unit:" + ROOT_TEAM),
+                "the hierarchy resource must still ride the same request");
     }
 
     private boolean allowsSpawn(String grantResource, String requestResource) {
@@ -169,5 +222,23 @@ class AgentSpawnSubtreeScopeTest {
                 "33333333-3333-4333-8333-333333333333",
                 "55555555-5555-4555-8555-555555555555",
                 UUID.randomUUID(), "user-1", WS, principalId, "canonical-body");
+    }
+
+    /**
+     * Drive the agent (self-spawn) arm of the real gate for an agent that sits in {@code root.team},
+     * and return the invocation so callers can assert on what the gate actually passed to the policy.
+     */
+    private ChatSubmissionService.SpawnInvocation agentGate() {
+        ChatSubmissionService.SpawnInvocation invocation =
+                invocation("88888888-8888-4888-8888-888888888888");
+        UUID unit = UUID.randomUUID();
+        when(members.findUnitOf("agent_principal", UUID.fromString(invocation.principalId())))
+                .thenReturn(Optional.of(unit));
+        when(units.findUnit(unit)).thenReturn(Optional.of(
+                new OrgUnitReadRepository.UnitRow(unit, null, "team", null, "root.team", 1)));
+        when(policy.allowsByGrant(any(PolicyContext.class), anyString(), anyString(), anyString(),
+                anyString(), anyString(), eq(false), any(), any())).thenReturn(true);
+        service.authorize(invocation, null);
+        return invocation;
     }
 }
