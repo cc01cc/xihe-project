@@ -170,7 +170,23 @@ const { resizing: navResizing, layoutReady: navLayoutReady } = navBridge;
  * 之后才启用 flex-grow 过渡。跨页重挂载因此直接以最终宽度完成首绘；用户后续的拖拽 /
  * 键盘折叠仍有过渡。禁止用 setTimeout/强制 reflow 绕过。
  */
-const navShellAnimated = computed(() => navLayoutReady.value && !navResizing.value);
+/**
+ * 首次布局那一帧也不参与动画：reka 的就绪回调与首帧 `flex-grow` 写入发生在同一帧内，
+ * 只 gate `layoutReady` 不够 —— class 在同一帧翻转，浏览器仍会从 0 起算。这里再等
+ * **两次 rAF**（第一帧以最终宽度完成绘制之后）才允许过渡。rAF 是「下一帧」语义，不是
+ * 定时器兜底：不设固定延时、不依赖机器速度。
+ */
+const navShellPainted = ref(false);
+onMounted(() => {
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            navShellPainted.value = true;
+        });
+    });
+});
+const navShellAnimated = computed(
+    () => navShellPainted.value && navLayoutReady.value && !navResizing.value,
+);
 
 function setNavPanel(el: unknown): void {
     navPanelEl.value = (el as SplitterPanelExposed | null) ?? null;
@@ -446,7 +462,7 @@ onUnmounted(() => {
                     :is-mobile="isMobile"
                     :force-collapsed="navYielded"
                     :resizing="navResizing"
-                    :layout-ready="navLayoutReady"
+                    :layout-ready="navShellAnimated"
                 />
             </SplitterPanel>
             <!--
