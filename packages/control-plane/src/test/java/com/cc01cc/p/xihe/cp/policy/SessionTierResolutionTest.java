@@ -19,6 +19,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -305,18 +306,54 @@ class SessionTierResolutionTest {
         }
     }
 
-    /** 主源码根：测试类 code source 是 {@code <module>/target/test-classes} ⇒ 上两级是模块根。 */
+    /**
+     * 主源码根：**不得**从 target dir 位置推断（task-1006：隔离 target 可以落在仓外，
+     * `-Dxihe.target.dir=C:/xihe-build/cp/task-XXXX` 时 <code>target/test-classes</code> 的祖先里没有
+     * {@code src/main/java}）。改为按「工作目录 → 多模块根 → classpath 位置」的顺序向上找模块根：
+     * 找到第一个同时具备 {@code src/main/java} 的目录；都找不到才报「根定位失败」，
+     * 而不是把定位失败伪装成业务断言失败。
+     */
     private static Path mainSourceRoot() {
+        List<Path> starts = new ArrayList<>();
+        String userDir = System.getProperty("user.dir");
+        if (userDir != null && !userDir.isBlank()) {
+            starts.add(Objects.requireNonNull(Path.of(userDir)));
+        }
+        String multiModuleRoot = System.getProperty("maven.multiModuleProjectDirectory");
+        if (multiModuleRoot != null && !multiModuleRoot.isBlank()) {
+            starts.add(Objects.requireNonNull(Path.of(multiModuleRoot)));
+        }
         try {
-            Path moduleRoot = Path.of(Objects.requireNonNull(
-                            SessionTierResolutionTest.class.getProtectionDomain().getCodeSource().getLocation().toURI()))
-                    .getParent()
-                    .getParent();
-            Path sourceRoot = moduleRoot.resolve("src").resolve("main").resolve("java");
-            assertTrue(Files.isDirectory(sourceRoot), "主源码根不存在：" + sourceRoot);
-            return sourceRoot;
+            starts.add(Path.of(Objects.requireNonNull(SessionTierResolutionTest.class
+                    .getProtectionDomain().getCodeSource().getLocation().toURI())));
         } catch (java.net.URISyntaxException e) {
             throw new IllegalStateException("cannot resolve test code source location", e);
         }
+
+        for (Path start : starts) {
+            Path moduleRoot = locateModuleRoot(start);
+            if (moduleRoot != null) {
+                return moduleRoot.resolve("src").resolve("main").resolve("java");
+            }
+        }
+        throw new IllegalStateException("主源码根定位失败：从 " + starts
+                + " 起向上 8 级都没有 src/main/java（隔离 target 在仓外时，请在 packages/control-plane "
+                + "下运行 mvn，或让 user.dir / maven.multiModuleProjectDirectory 指向模块根）");
+    }
+
+    /** 从 {@code start} 向上找模块根；顺带认「仓库根/packages/control-plane」这种从仓根启动的形态。 */
+    private static Path locateModuleRoot(Path start) {
+        Path cursor = start.toAbsolutePath().normalize();
+        for (int depth = 0; depth <= 8 && cursor != null; depth++) {
+            Path nestedModule = cursor.resolve("packages").resolve("control-plane");
+            if (Files.isDirectory(nestedModule.resolve("src").resolve("main").resolve("java"))) {
+                return nestedModule;
+            }
+            if (Files.isDirectory(cursor.resolve("src").resolve("main").resolve("java"))) {
+                return cursor;
+            }
+            cursor = cursor.getParent();
+        }
+        return null;
     }
 }
