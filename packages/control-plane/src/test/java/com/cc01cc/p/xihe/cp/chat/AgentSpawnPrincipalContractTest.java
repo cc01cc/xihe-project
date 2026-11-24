@@ -397,6 +397,11 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         com.fasterxml.jackson.databind.node.ObjectNode spawn = objectMapper.createObjectNode();
         spawn.put("actionClass", "action:SPAWN_AGENT");
         narrowed.add(spawn);
+        // task-969 / D-1942: the self-spawn gate AND-s action:clone, so the narrowed binding
+        // must carry it too, otherwise this fixture tests denial rather than cap narrowing.
+        com.fasterxml.jackson.databind.node.ObjectNode clone = objectMapper.createObjectNode();
+        clone.put("actionClass", "action:clone");
+        narrowed.add(clone);
         WorkspaceAgent binding = workspaceAgentRepository.findById(
                 new WorkspaceAgentId(principalId, UUID.fromString(workspaceId))).orElseThrow();
         binding.setPermissionsSnapshot(narrowed);
@@ -990,6 +995,11 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         com.fasterxml.jackson.databind.node.ObjectNode spawn = objectMapper.createObjectNode();
         spawn.put("actionClass", "action:SPAWN_AGENT");
         cap.add(spawn);
+        // task-969 / D-1942: agent presets (V187) carry action:clone; the self-spawn gate now
+        // evaluates it, so a spawn-capable agent fixture must hold both atoms.
+        com.fasterxml.jackson.databind.node.ObjectNode clone = objectMapper.createObjectNode();
+        clone.put("actionClass", "action:clone");
+        cap.add(clone);
         com.fasterxml.jackson.databind.node.ObjectNode atom = objectMapper.createObjectNode();
         atom.put("actionClass", "action:read");
         cap.add(atom);
