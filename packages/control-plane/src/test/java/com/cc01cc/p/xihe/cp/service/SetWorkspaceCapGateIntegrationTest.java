@@ -29,6 +29,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -153,24 +154,44 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         User weak = newUser("weak-grantor");
         grantDefaultService.ensureUserDefault(weak);
         // The target workspace belongs to someone else; weak is only a viewer (read+N7 there) and
-        // carries the management atom instance-side — so the ACTION gate passes, the cap is empty,
-        // yet the automatic WS_EDITOR default needs write/delete/exec/N6/N9 it does not hold.
+        // carries the management atom instance-side — so the ACTION gate passes, yet the caller
+        // does not hold `write`, which the requested cap names explicitly.
         User host = newUser("weak-host");
         grantDefaultService.ensureUserDefault(host);
         Workspace ws = workspaceFixture.createOwnedWorkspace("WeakGrantor", host.getId().toString());
         workspaceFixture.bindWorkspaceRole(ws.getId(), weak.getId(), WorkspaceRole.VIEWER);
-        UUID principal = newPrincipal(host, "WeakP");
+        // task-1004: the *principal* must already hold exec, otherwise the refusal would come from
+        // the principal ceiling and this case would stop testing the actor side.
+        UUID execRole = roleWith("TEST_WEAK_RUNNER", ToolFaceRegistry.ACTION_EXEC);
+        UUID principal = createPrincipalWithRoles(host, ws.getId(), "WeakP", List.of(execRole));
         jdbcTemplate.update("DELETE FROM grants WHERE subject_type='user' AND subject_id=?"
                 + " AND source IN ('default','assigned')", weak.getId());
+        // task-1004: dropping the grant rows alone is not enough — replaying the still-bound USER
+        // preset would hand `exec` straight back. Remove the instance-scope preset bindings too, so
+        // the grantor really holds only the management atom (workspace membership stays intact).
+        jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE subject_type='user'"
+                + " AND subject_id=CAST(? AS UUID) AND scope_type='instance'", weak.getId());
         UUID manageOnly = roleWith("TEST_WEAK_MANAGE", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
         bindingRepository.save(new GrantPresetBinding(manageOnly, "user", weak.getId(),
                 AccessScope.INSTANCE, null, weak.getId()));
         materializer.materializeSubject("user", weak.getId(), weak.getId(), null);
 
+        // task-1004: the refusal must be carried by a NON-agent-only atom. `action:clone` is exempt
+        // from the actor-side rule (D-1935: agents clone by default, humans never hold it), so this
+        // gate keeps its teeth on `action:exec` — exec only arrives through the explicit WS_RUNNER
+        // binding (DSD-1500), never through this grantor's holdings.
+        String requestedCap = "[{\"actionClass\":\""
+                + ToolFaceRegistry.ACTION_EXEC + "\",\"resource\":\"*\"}]";
         CpApiException denied = assertThrows(CpApiException.class,
                 () -> agentPrincipalService.setWorkspaceCap(weak.getId().toString(), ws.getId(),
-                        principal, json("[]")));
-        assertEquals("PRIVILEGE_ESCALATION", denied.getCode());
+                        principal, json(requestedCap)));
+        assertEquals("AGENT_PERMISSION_SCOPE_EXCEEDED", denied.getCode());
+        assertTrue(denied.getMessage().contains("principal-exceeding=[]"),
+                "the principal already holds exec; a refusal here can only be the actor side: "
+                        + denied.getMessage());
+        assertTrue(denied.getMessage().contains("actor-exceeding=[action:"
+                + ToolFaceRegistry.ACTION_EXEC + "@*]"),
+                "the caller-side refusal names the non-agent-only atom: " + denied.getMessage());
         assertFalse(workspaceAgentRepository.existsById(new WorkspaceAgentId(principal, ws.getId())));
         assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM grant_preset_bindings"
                 + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
@@ -181,6 +202,44 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
                 + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
                 + " AND scope_type='workspace'", Integer.class,
                 principal.toString()), "zero workspace agent grant rows on refusal");
+    }
+
+    /**
+     * task-1004: the `action:clone` exemption is **actor-side only**. A cap may never exceed what the
+     * agent principal itself holds, so an agent bound to a clone-less role still refuses a clone cap
+     * on the principal ceiling (D-160 ③).
+     */
+    @Test
+    void cloneCapIsRefusedWhenThePrincipalLacksIt() {
+        User owner = newUser("clone-ceiling");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace ws = workspaceFixture.createOwnedWorkspace("CloneCeiling", owner.getId().toString());
+        // A read-only instance role instead of AGENT_USER keeps `action:clone` off the principal.
+        UUID readOnly = roleWith("TEST_CLONE_READONLY", ToolFaceRegistry.ACTION_READ);
+        UUID principal = createPrincipalWithRoles(owner, ws.getId(), "CloneCeilingP", List.of(readOnly));
+
+        CpApiException denied = assertThrows(CpApiException.class,
+                () -> agentPrincipalService.setWorkspaceCap(owner.getId().toString(), ws.getId(),
+                        principal, json("[{\"actionClass\":\"clone\",\"resource\":\"*\"}]")));
+        assertEquals("AGENT_PERMISSION_SCOPE_EXCEEDED", denied.getCode());
+        assertTrue(denied.getMessage().contains("principal-exceeding=[action:clone@*]"),
+                "the principal-side refusal still names clone: " + denied.getMessage());
+        assertFalse(workspaceAgentRepository.existsById(new WorkspaceAgentId(principal, ws.getId())),
+                "a refused cap leaves no binding row behind");
+    }
+
+    private UUID createPrincipalWithRoles(User owner, UUID wsId, String name, List<UUID> roleIds) {
+        com.cc01cc.p.xihe.cp.config.TenantContext.setUserId(owner.getId().toString());
+        com.cc01cc.p.xihe.cp.config.TenantContext.setWorkspaceId(wsId.toString());
+        com.cc01cc.p.xihe.cp.config.TenantContext.setWorkspaceSource("test");
+        try {
+            var template = agentTemplateService.resolveForCreation(
+                    owner.getId().toString(), wsId.toString(), null);
+            return agentPrincipalService.createPrincipal(owner.getId().toString(), name, null,
+                    template.snapshot(), null, null, null, null, null, null, roleIds).getId();
+        } finally {
+            com.cc01cc.p.xihe.cp.config.TenantContext.clear();
+        }
     }
 
     /** GRANT_ANY_ATOM bypasses the subset gate and is audited with the skipped list (T2.4). */

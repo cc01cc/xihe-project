@@ -562,7 +562,20 @@ public class AgentPrincipalService {
                 grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, actorId,
                         GrantSources.EVALUATION_SOURCES, workspaceId));
         List<String> overPrincipal = exceeding(cap, principalPermissions);
-        List<String> overActor = exceeding(cap, actorPermissions);
+        // task-1004 / D-1935: `action:clone` is an **agent-only** default. AGENT_BASE_ATOMS carries
+        // it (an agent may derive a second instance of itself) while human presets deliberately never
+        // do, so the caller-subset rule (D-160) cannot demand it from a human actor — otherwise no
+        // owner could ever raise an inherited cap. The principal side above still enforces the
+        // agent's own ceiling, and every other atom stays subject to the actor check.
+        // task-1004 / D-1935: `action:clone` is an **agent-only** default. AGENT_BASE_ATOMS carries
+        // it (an agent may derive a second instance of itself) while human presets deliberately never
+        // do, so the caller-subset rule (D-160) cannot demand it from a human actor — otherwise no
+        // owner could ever raise an inherited cap. The principal side above still enforces the
+        // agent's own ceiling, and every other atom stays subject to the actor check.
+        Set<GrantIntersectionEvaluator.PermissionAtom> actorComparable = new LinkedHashSet<>(cap);
+        String cloneAtom = com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_CLONE);
+        actorComparable.removeIf(atom -> cloneAtom.equals(atom.actionClass()));
+        List<String> overActor = exceeding(actorComparable, actorPermissions);
         if (!overPrincipal.isEmpty() || !overActor.isEmpty()) {
             // D-160 ③: the refusal names the exceeding atoms per side, in the 409 naming style
             // (atom@resource) — the grantor must already hold every atom it raises the cap to.
