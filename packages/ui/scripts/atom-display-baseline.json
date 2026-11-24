@@ -1,0 +1,15 @@
+{
+    "generatedAt": "2026-11-24",
+    "entries": {
+        "src/components/settings/AgentTemplatesPanel.vue|preset.permissions .map((item) => `${item.actionClass}:${item.resource ?? \"*\"}`) .join(\", \") || t(\"settings.agentRoleNoPermissions\")": 1,
+        "src/features/workspace/chat/components/ApprovalModal.vue|approval.policy.actionClass": 1,
+        "src/features/workspace/chat/components/ApprovalModal.vue|approval.policy?.actionClass ?? t(\"chat.approvalRuleActionClassDerived\")": 1,
+        "src/preview/sections/AgentPanelSection.vue|atom.actionClass": 1,
+        "src/views/settings/AuditView.vue|entry.policy.actionClass": 1,
+        "src/views/settings/AuthorizationOverviewView.vue|row.atom.actionClass": 1,
+        "src/views/settings/AuthorizationOverviewView.vue|atom.actionClass": 1,
+        "src/views/settings/AuthorizationOverviewView.vue|explainMissing.actionClass": 1,
+        "src/views/settings/AuthorizationOverviewView.vue|ref.actionClass": 1,
+        "src/views/settings/ToolFacesView.vue|face.actionClass": 1
+    }
+}

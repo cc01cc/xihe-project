@@ -1145,6 +1145,16 @@ run = "node packages/ui/scripts/check-copy-leak.mjs --require-stack --enforce"
 description = "Enforce copy-leak gate: hits => exit 1, and no reachable stack => exit 2 (refuses to be green when it could not judge). Manual / windowed only; NOT wired into any aggregate."
 alias = "check:copy-leak:enforce"
 
+# task-949 / R78（2026-11-24）：canonical 权限原子名（`action:…` / `cap:…` / 大写原子）只用于
+# API 与审计，界面必须本地化。本门在**源码模板层**判定 `{{ … .actionClass … }}` 未包本地化函数；
+# 存量 10 条（审批弹窗 / 审计 / 授权总览 / 工具面 / 模板面板）见
+# packages/ui/scripts/atom-display-baseline.json，只减不增；**无栈可跑**（属 `mise run lint` 聚合成员）。
+# 自测：node packages/ui/scripts/check-atom-display.mjs --selftest（6 例）。
+[tasks."check:atom-display"]
+run = "node packages/ui/scripts/check-atom-display.mjs"
+description = "Atom display gate (task-949 R78): templates must not interpolate `.actionClass` without a localizer; baseline is shrink-only. Selftest: --selftest (6 cases)."
+alias = "check:atom-display"
+
 # task-172 快档②：夹具自带 i18n 副本 ratchet（task-318 脚本，补建任务）。当前基线外 (a) 5 文件 ⇒
 # 必须 report-only 起步（直接阻断会当场搅红全树）；清账或登记后另议转阻断。脚本自带 --selftest（5 例）。
 [tasks."check:i18n-fixture-copies"]

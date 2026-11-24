@@ -1025,14 +1025,111 @@ async function confirmArchiveMemory(principalId: string, memoryId: string) {
     }
 }
 
-function actionLabel(actionClass: string): string {
-    // task-904: tolerate canonical `action:` names even if a caller bypasses the read boundary.
-    // `cap:` is not an action atom, so it has no localized action label.
-    const bare = bareAtom(actionClass);
-    if (!bare) return actionClass;
-    const key = `workspace.agentAction${bare[0]?.toUpperCase()}${bare.slice(1)}`;
-    const label = t(key);
-    return label === key ? bare : label;
+/**
+ * task-949 / R78：canonical 原子名只用于 API 与审计，**界面上屏必须是可读词**。
+ * 冻结快照（`permissionsSnapshot` / 生效上限 / hook 订阅）里可能是 `action:read`、
+ * `cap:instance:admin`、`MANAGE_WORKSPACE_MCP` 这类内部拼写 —— 直接渲染等于把内部词汇
+ * 交给用户（与「实现约束被当产品设计」同族）。
+ *
+ * 映射是**穷举 + fail-safe**：认识的原子给本地化名；不认识的一律收敛成「其他权限」，
+ * 绝不回落到裸名（`actionLabel` 旧实现里的 `return bare` 就是 R78 的根源）。
+ */
+const ATOM_LABEL_KEYS: Record<string, string> = {
+    // 六个动作类（既有键，保留兼容）
+    read: "agentActionRead",
+    write: "agentActionWrite",
+    delete: "agentActionDelete",
+    exec: "agentActionExec",
+    network: "agentActionNetwork",
+    credential: "agentActionCredential",
+    // 凭据细分（ToolFaceRegistry 的 canonical 拼写）
+    credential_use: "agentActionCredentialUse",
+    credential_reveal: "agentActionCredentialReveal",
+    credential_manage: "agentActionCredentialManage",
+    clone: "agentActionClone",
+    approve: "agentActionApprove",
+    // 大写能力原子
+    CREATE_ACCOUNT: "agentAtomCreateAccount",
+    CREATE_TEMPLATE: "agentAtomCreateTemplate",
+    MANAGE_WORKSPACE_AGENTS: "agentAtomManageWorkspaceAgents",
+    SPAWN_AGENT: "agentAtomSpawnAgent",
+    CREATE_SCHEDULED_TASK: "agentAtomCreateScheduledTask",
+    MANAGE_SCHEDULED_TASK: "agentAtomManageScheduledTask",
+    MANAGE_ROLES: "agentAtomManageRoles",
+    GRANT_ANY_ATOM: "agentAtomGrantAnyAtom",
+    CREATE_OWN_AGENT: "agentAtomCreateOwnAgent",
+    MEMORY_WRITE: "agentAtomMemoryWrite",
+    MEMORY_WRITE_SELF: "agentAtomMemoryWriteSelf",
+    MANAGE_AGENT_PRINCIPALS: "agentAtomManageAgentPrincipals",
+    MANAGE_WORKSPACE_MEMBERS: "agentAtomManageWorkspaceMembers",
+    READ_INSTANCE_CONTENT: "agentAtomReadInstanceContent",
+    WRITE_INSTANCE_CONTENT: "agentAtomWriteInstanceContent",
+    VIEW_SECRET_CONTENT: "agentAtomViewSecretContent",
+    MANAGE_SKILL_LIBRARY: "agentAtomManageSkillLibrary",
+    MANAGE_PERSONAL_SKILLS: "agentAtomManagePersonalSkills",
+    MANAGE_PROVIDER_CONNECTIONS: "agentAtomManageProviderConnections",
+    USE_WORKSPACE_RUNTIME: "agentAtomUseWorkspaceRuntime",
+    MANAGE_WORKSPACE_RUNTIME: "agentAtomManageWorkspaceRuntime",
+    MANAGE_WORKSPACE_POLICY: "agentAtomManageWorkspacePolicy",
+    TEAM_TASK_MANAGE: "agentAtomTeamTaskManage",
+    "session:permission:configure": "agentAtomSessionPermissionConfigure",
+    MANAGE_WORKSPACE_DEFAULT_CONFIG: "agentAtomManageWorkspaceDefaultConfig",
+    WRITE_WORKSPACE_CONTENT: "agentAtomWriteWorkspaceContent",
+    MANAGE_WORKSPACE_MCP: "agentAtomManageWorkspaceMcp",
+    PLUGIN_MANAGE: "agentAtomPluginManage",
+    PLUGIN_BIND: "agentAtomPluginBind",
+    PLUGIN_INVOKE: "agentAtomPluginInvoke",
+    PLUGIN_DATA: "agentAtomPluginData",
+    MANAGE_ORG_UNITS: "agentAtomManageOrgUnits",
+    MANAGE_ORG_UNIT_MEMBERS: "agentAtomManageOrgUnitMembers",
+    READ_ORG_UNIT_MEMBERS: "agentAtomReadOrgUnitMembers",
+};
+
+/** `cap:` 角色/超管原子（不是动作，不能落进动作标签族）。 */
+const CAP_LABEL_KEYS: Record<string, string> = {
+    "cap:instance:super": "agentAtomCapInstanceSuper",
+    "cap:instance:admin": "agentAtomCapInstanceAdmin",
+    "cap:workspace:admin": "agentAtomCapWorkspaceAdmin",
+};
+
+function localizedLabel(key: string, fallbackKey: string): string {
+    const full = `workspace.${key}`;
+    const label = t(full);
+    return label === full ? t(fallbackKey) : label;
+}
+
+function atomDisplayLabel(actionClass: string): string {
+    const raw = actionClass.trim();
+    if (raw === "") return t("workspace.agentAtomOther");
+    // 工作区 MCP 资源（`mcp:<serverId>`）不是权限原子：给「工具名」而不是 canonical 拼写。
+    if (raw.startsWith("mcp:")) {
+        const server = raw.slice("mcp:".length).trim();
+        return server === ""
+            ? t("workspace.agentAtomOther")
+            : t("workspace.agentAtomWorkspaceMcp", { server });
+    }
+    const capKey = CAP_LABEL_KEYS[raw];
+    if (capKey) return localizedLabel(capKey, "workspace.agentAtomOther");
+    const bare = bareAtom(raw);
+    if (bare === null) {
+        // `cap:` 家族里未登记的项，同样不裸显。
+        return t("workspace.agentAtomOther");
+    }
+    const key = ATOM_LABEL_KEYS[bare];
+    return key ? localizedLabel(key, "workspace.agentAtomOther") : t("workspace.agentAtomOther");
+}
+
+/**
+ * hook 订阅的 `on` 是**开放的动作类**（`advisors[].on`，见 `hookKinds` 注释），不等同于权限原子：
+ * 认识的走本地化；`approval.ask` 这类小写工具类名保持原样（它们不是 canonical 原子，
+ * 也不是「实现约束」，硬翻译反而看不出订阅的是哪个工具动作）。canonical 前缀与大写原子
+ * 在快照面一律走 `atomDisplayLabel`，不经过这里。
+ */
+function hookActionLabel(actionClass: string): string {
+    const bare = bareAtom(actionClass) ?? actionClass;
+    const known = ATOM_LABEL_KEYS[bare];
+    if (known) return localizedLabel(known, "workspace.agentAtomOther");
+    return /^[a-z][a-z0-9_.]*$/.test(bare) ? bare : t("workspace.agentAtomOther");
 }
 
 function hasPermission(actionClass: string): boolean {
@@ -1687,7 +1784,7 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                             {{ t("workspace.agentHooksLabel") }}:
                             {{ hookKinds(agent).join("、") }}
                             <template v-if="hookActionClasses(agent).length">
-                                · {{ hookActionClasses(agent).join(", ") }}
+                                · {{ hookActionClasses(agent).map(hookActionLabel).join("、") }}
                             </template>
                         </p>
                         <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
@@ -1710,9 +1807,10 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                             {{ t("agentPrincipalDetail.details") }}
                         </button>
                         <!-- task-116：默认智能体的唯一写入口就在行内；已有默认时给「取消」，
-                             否则给「设为默认」。无权限时保持可见但禁用，并写明原因（fail-closed）。 -->
+                             否则给「设为默认」。无权限时保持可见但禁用，并写明原因（fail-closed）。
+                             task-949 / R77：未绑定行不能成为默认主体 ⇒ 整组默认动作只对已绑定行渲染。 -->
                         <button
-                            v-if="agent.isDefault === true"
+                            v-if="agent.bound !== false && agent.isDefault === true"
                             type="button"
                             class="rounded-md border px-2 py-1 text-xs disabled:opacity-50"
                             :data-testid="`workspace-agent-default-clear-${agent.principalId}`"
@@ -1726,7 +1824,7 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                             {{ t("workspaceAgents.clearDefault") }}
                         </button>
                         <button
-                            v-else
+                            v-else-if="agent.bound !== false"
                             type="button"
                             class="rounded-md border px-2 py-1 text-xs disabled:opacity-50"
                             :data-testid="`workspace-agent-default-set-${agent.principalId}`"
@@ -1740,14 +1838,20 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                             {{ t("workspaceAgents.setDefault") }}
                         </button>
                         <p
-                            v-if="canManageWorkspaceAgents !== true"
+                            v-if="agent.bound !== false && canManageWorkspaceAgents !== true"
                             class="max-w-[12rem] text-right text-xs text-muted-foreground"
                             :data-testid="`workspace-agent-default-disabled-${agent.principalId}`"
                         >
                             {{ t("workspaceAgents.actionDisabled") }}
                         </p>
-                        <!-- 真栈 S2 bug：已有 agent 也必须能在这里绑定到本工作区（幂等 PUT）。 -->
+                        <!--
+                            task-949 / R77：行状态与动作集合互斥 —— 已绑定行只给
+                            「详情 / 默认 / 编辑上限 / 解绑 / 禁用」，绑定按钮只属于未绑定行。
+                          `bound === false` 是唯一可绑定状态；`undefined`（读面未透出）按已绑定处理，
+                          避免把已绑定主体再显示一次「绑定到此工作区」。
+                        -->
                         <button
+                            v-if="agent.bound === false"
                             type="button"
                             class="rounded-md border px-2 py-1 text-xs disabled:opacity-50"
                             :data-testid="`agent-bind-row-${agent.principalId}`"
@@ -1757,6 +1861,7 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                             {{ t("workspace.bindAgent") }}
                         </button>
                         <button
+                            v-if="agent.bound !== false"
                             type="button"
                             class="rounded-md border px-2 py-1 text-xs"
                             :data-testid="`workspace-agent-unbind-${agent.principalId}`"
@@ -1824,7 +1929,7 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                             :key="`${permission.actionClass}:${permission.resource ?? '*'}`"
                             class="rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
                         >
-                            {{ actionLabel(permission.actionClass) }} ·
+                            {{ atomDisplayLabel(permission.actionClass) }} ·
                             {{ permission.resource ?? "*" }}
                         </span>
                         <span
@@ -1962,7 +2067,7 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                                     :key="`${permission.actionClass}:${permission.resource ?? '*'}`"
                                     class="rounded border px-1.5 py-0.5 text-xs"
                                 >
-                                    {{ actionLabel(permission.actionClass) }} ·
+                                    {{ atomDisplayLabel(permission.actionClass) }} ·
                                     {{ permission.resource ?? "*" }}
                                 </span>
                                 <span
@@ -2064,7 +2169,7 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                                         )
                                     "
                                 />
-                                {{ actionLabel(actionClass) }}
+                                {{ atomDisplayLabel(actionClass) }}
                             </label>
                             <input
                                 v-if="hasPermission(actionClass)"
@@ -2072,7 +2177,7 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                                 :data-testid="`agent-resource-${actionClass}`"
                                 :aria-label="
                                     t('workspace.agentResourceFor', {
-                                        action: actionLabel(actionClass),
+                                        action: atomDisplayLabel(actionClass),
                                     })
                                 "
                                 class="min-w-0 rounded-md border bg-background px-2 py-1 text-xs"

@@ -60,6 +60,8 @@ export const LINT_GATES = [
     "check:i18n-fixture-copies",
     "check:dev-i18n-drift",
     "check:form-validation",
+    // task-949 / R78（2026-11-24）：UI 模板不得裸显 canonical 权限原子名（基线只减不增）。
+    "check:atom-display",
     // task-951（2026-11-24）：task-939 交付、task-945 只登记了独立 mise task，聚合成员位与
     // packages/ui 的 --gate 入口都在 945 写域外 ⇒ 本卡补上，判据与基线不动。
     "check:filetree-ia",

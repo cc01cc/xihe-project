@@ -314,7 +314,7 @@ describe("WorkspaceAgentsPanel PLAN-0622 list rows", () => {
 // CP 的 GET /workspaces/{ws}/agents 现在会返回调用者自己的 PERSONAL/INSTANCE 主体（V4），
 // 但它们**未绑定**时无法建会话（403 not bound）；而 UI 只在"刚创建"的区块里给 bind 按钮，
 // 关掉重开后就没有入口了 —— 用户视角是死路。
-describe("WorkspaceAgentsPanel bind an existing agent row", () => {
+describe("WorkspaceAgentsPanel bind an existing agent row (task-949 R77)", () => {
     const existing = {
         principalId: "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb",
         name: "Existing personal",
@@ -325,17 +325,53 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
         bound: true,
         disabled: false,
     };
+    /** 读面明确给出 `bound: false` 的行——唯一允许出现「绑定到此工作区」的状态。 */
+    const unbound = {
+        ...existing,
+        principalId: "bbbbbbbb-3333-4333-8333-bbbbbbbbbbbb",
+        bound: false,
+    };
 
-    it("offers a row-level bind that PUTs the workspace cap and refreshes the list", async () => {
-        apiMock.getWorkspaceAgents.mockResolvedValue([existing]);
+    it("never offers bind on a bound row; row state and action set are exclusive", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([existing, unbound]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        const wrapper = await mountOpenedPanel();
+
+        for (const row of [existing, unbound]) {
+            const article = wrapper.get(`[data-testid="workspace-agent-${row.principalId}"]`);
+            const hasBind = article
+                .find(`[data-testid="agent-bind-row-${row.principalId}"]`)
+                .exists();
+            const hasUnbind = article
+                .find(`[data-testid="workspace-agent-unbind-${row.principalId}"]`)
+                .exists();
+            expect(
+                hasBind && hasUnbind,
+                `row ${row.principalId} must never offer bind and unbind at the same time`,
+            ).toBe(false);
+            if (row.bound === false) {
+                expect(hasBind, "an unbound row is the only place the bind action belongs").toBe(
+                    true,
+                );
+                expect(hasUnbind, "an unbound row has nothing to unbind").toBe(false);
+            } else {
+                expect(hasBind, "a bound row must not show the bind action again").toBe(false);
+                expect(hasUnbind, "a bound row keeps the unbind action").toBe(true);
+            }
+        }
+        wrapper.unmount();
+    });
+
+    it("binds an unbound row by PUTting the workspace cap and refreshing the list", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([unbound]);
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
         const wrapper = await mountOpenedPanel();
 
-        const bindRow = wrapper.find(`[data-testid="agent-bind-row-${existing.principalId}"]`);
+        const bindRow = wrapper.find(`[data-testid="agent-bind-row-${unbound.principalId}"]`);
         expect(
             bindRow.exists(),
-            "an existing agent row must offer a way to bind it to this workspace",
+            "an unbound agent row must offer a way to bind it to this workspace",
         ).toBe(true);
 
         await bindRow.trigger("click");
@@ -346,7 +382,7 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
         const [wsArg, principalArg, permissionsArg] =
             apiMock.updateWorkspaceAgentCap.mock.calls[0] ?? [];
         expect(wsArg).toBe(WORKSPACE_ID);
-        expect(principalArg).toBe(existing.principalId);
+        expect(principalArg).toBe(unbound.principalId);
         expect(
             permissionsArg,
             "绑定只继承基线；显式零权限只能由用户在「编辑工作区角色」里主动选",
@@ -358,10 +394,10 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
 
     it("keeps the row-level bind disabled without MANAGE_WORKSPACE_AGENTS (fail-closed)", async () => {
         admin.value = false;
-        apiMock.getWorkspaceAgents.mockResolvedValue([existing]);
+        apiMock.getWorkspaceAgents.mockResolvedValue([unbound]);
         apiMock.getSelfPermissions.mockResolvedValue(USER_TIER_ONLY);
         const wrapper = await mountOpenedPanel();
-        const bindRow = wrapper.find(`[data-testid="agent-bind-row-${existing.principalId}"]`);
+        const bindRow = wrapper.find(`[data-testid="agent-bind-row-${unbound.principalId}"]`);
         expect(bindRow.attributes("disabled")).toBeDefined();
         wrapper.unmount();
     });
@@ -864,6 +900,67 @@ describe("WorkspaceAgentsPanel unbound badge", () => {
                 .exists(),
             "a bound row must not carry the unbound badge",
         ).toBe(false);
+        wrapper.unmount();
+    });
+});
+
+// task-949 R78：冻结快照/生效上限里的 canonical 原子名不得裸显到中文界面。
+describe("WorkspaceAgentsPanel atom display localization (task-949 R78)", () => {
+    const RAW_FORMS = ["action:", "cap:", "MANAGE_", "credential_use"];
+    const localizedRow = {
+        principalId: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+        name: "Localized atoms",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-02T00:00:00Z",
+        permissionsSnapshot: [
+            { actionClass: "action:read", resource: "*" },
+            { actionClass: "action:credential_use", resource: "*" },
+            { actionClass: "cap:workspace:admin", resource: "*" },
+            { actionClass: "MANAGE_WORKSPACE_MCP", resource: "*" },
+            { actionClass: "UNREGISTERED_ATOM_X", resource: "*" },
+        ],
+        bound: true,
+        disabled: false,
+    };
+
+    it("renders readable words for action:/cap:/uppercase atoms and never the raw spelling", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([localizedRow]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        const wrapper = await mountOpenedPanel();
+
+        const cap = wrapper
+            .get(`[data-testid="workspace-agent-${localizedRow.principalId}"]`)
+            .get('[data-testid="workspace-agent-cap"]')
+            .text();
+
+        expect(cap).toContain(i18n.global.t("workspace.agentActionRead"));
+        expect(cap).toContain(i18n.global.t("workspace.agentActionCredentialUse"));
+        expect(cap).toContain(i18n.global.t("workspace.agentAtomCapWorkspaceAdmin"));
+        expect(cap).toContain(i18n.global.t("workspace.agentAtomManageWorkspaceMcp"));
+        // 未登记的原子收敛成「其他权限」，而不是把 canonical 拼写丢给用户。
+        expect(cap).toContain(i18n.global.t("workspace.agentAtomOther"));
+        for (const raw of RAW_FORMS) {
+            expect(cap, `frozen snapshot must not show raw atom form ${raw}`).not.toContain(raw);
+        }
+        expect(cap).not.toContain("UNREGISTERED_ATOM_X");
+        wrapper.unmount();
+    });
+
+    it("localizes the hook subscription action classes instead of joining raw atoms", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([
+            {
+                ...localizedRow,
+                hooks: { advisors: [{ kind: "review", on: ["action:write", "action:exec"] }] },
+            },
+        ]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        const wrapper = await mountOpenedPanel();
+
+        const hooks = wrapper.get(`[data-testid="agent-hooks-${localizedRow.principalId}"]`).text();
+        expect(hooks).toContain(i18n.global.t("workspace.agentActionWrite"));
+        expect(hooks).toContain(i18n.global.t("workspace.agentActionExec"));
+        expect(hooks).not.toContain("action:");
         wrapper.unmount();
     });
 });
