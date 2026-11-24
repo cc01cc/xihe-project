@@ -14,7 +14,7 @@ import AgentPrincipalBindingsView from "../AgentPrincipalBindingsView.vue";
  *   <li>**面包屑四段**的第三段是真名 / 无读面时回落成 principalId（卡面 H7 ③ + H11）；
  *       trail 的渲染在 `SettingsLayerHeader.spec.ts` 另有用例钉住，这里断言本页交给外框的
  *       payload 本身（含第二段的同层向上链接）。</li>
- *   <li>**名称缺口措辞红线**：只写「名称读面未提供」，不得写「不存在 / 加载失败 / 无权限」——</li>
+ *   <li>**名称缺口措辞红线**：只写「暂未提供名称」，不得写「不存在 / 加载失败 / 无权限」——</li>
  *   <li>**卸载清 setter**：跳到别的设置页时不能残留上一个主体名。</li>
  * </ol>
  */
@@ -80,7 +80,7 @@ describe("AgentPrincipalBindingsView（task-153 S1）", () => {
         );
     });
 
-    it("无单条读面 ⇒ 回落 principalId + 「名称读面未提供」，不写不存在/加载失败/无权限", async () => {
+    it("无单条读面 ⇒ 回落 principalId + 「暂未提供名称」，不写不存在/加载失败/无权限", async () => {
         mockedApi.listAgentPrincipals.mockResolvedValue([]);
 
         const { wrapper, setTrail } = mountView("p-404");
@@ -88,7 +88,8 @@ describe("AgentPrincipalBindingsView（task-153 S1）", () => {
 
         expect(wrapper.find('[data-testid="agent-bindings-subject-name"]').text()).toBe("p-404");
         expect(wrapper.find('[data-testid="agent-bindings-name-unavailable"]').text()).toBe(
-            "名称读面未提供",
+            // task-1011 去术语化后真值 = agentBindings.ts:28（「读面」属内部术语）。
+            "暂未提供名称",
         );
         const text = wrapper.text();
         for (const forbidden of ["不存在", "加载失败", "无权限"]) {

@@ -364,7 +364,9 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         // 旧的实例专属 3 字段面板已无挂载点（文件保留，见 task-284 的删除另立步）。
         expect(wrapper.find('[data-testid="llm-instance-default"]').exists()).toBe(false);
         // 逐层说明同步改口径：旧文案「实例层只保存默认的 provider、模型与连接槽位」已不再成立。
-        expect(partition.text()).toContain("实例连接");
+        // task-1011 去术语化后真值 = settings.ts:288（原文含「实例连接」的写法已消失）。
+        expect(partition.text()).toContain("实例层与个人层使用同一套结构");
+        expect(partition.text()).toContain("可以在实例层创建多条连接与多个模型");
         expect(partition.text()).not.toContain("只保存默认的 provider");
         wrapper.unmount();
     });
