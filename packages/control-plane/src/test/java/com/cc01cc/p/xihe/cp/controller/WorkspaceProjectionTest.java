@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
+import com.cc01cc.p.xihe.cp.service.WorkspaceImportSourceService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceNestedReposService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.AfterEach;
@@ -50,7 +51,8 @@ class WorkspaceProjectionTest {
         WorkspaceBackendPolicy backendPolicy = new WorkspaceBackendPolicy("");
         backendPolicy.validate();
         controller = new WorkspaceController(workspaceService, backendPolicy,
-                Mockito.mock(WorkspaceNestedReposService.class), requesterAuthority);
+                Mockito.mock(WorkspaceNestedReposService.class), requesterAuthority,
+                Mockito.mock(WorkspaceImportSourceService.class));
         TenantContext.setUserId(OWNER_ID);
     }
 

@@ -43,10 +43,8 @@ interface SourceEntry {
     readable: boolean;
     size: number;
     /**
-     * R44：git 徽标只消费 Runtime 的探测结果。当前 Runtime `SourceDirectoryEntry`
-     * （`runtime/src/import_job.rs`）还没有该字段，所以真实链路下徽标不出现；契约提案
-     * 见 evidence README（新增 `gitRepo` / `gitKind`）。前端不得靠读 `.git` 目录推断，
-     * 那条路在浏览器里本来也走不通。
+     * R44/task-981：Runtime `SourceDirectoryEntry` 已提供 `gitRepo` / `gitKind`；
+     * 徽标只读 `gitRepo`，不读 `.git`（那条路在浏览器里本来也走不通）。
      */
     gitRepo?: boolean;
 }
@@ -102,7 +100,8 @@ const sourcePath = ref(""),
     sourceLoading = ref(false),
     sourceError = ref("");
 const systemRoots = ref<SystemRoot[]>([]),
-    systemRootsLoading = ref(false);
+    systemRootsLoading = ref(false),
+    systemRootsError = ref("");
 
 // Runtime capability preflight (direct-attach only, aggregated across roots).
 const preflightLoading = ref(false),
@@ -238,6 +237,7 @@ function reset() {
     sourceError.value = "";
     systemRoots.value = [];
     systemRootsLoading.value = false;
+    systemRootsError.value = "";
     preflightLoading.value = false;
     preflightError.value = "";
     mxcPreflight.value = null;
@@ -280,8 +280,8 @@ function createReason(cause: unknown): string {
     return cause instanceof Error ? cause.message : t("workspace.createFailed");
 }
 
-function joinPath(base: string, name: string): string {
-    return `${base.replace(/[\\/]+$/, "")}/${name}`;
+function joinPath(base: string, entryName: string): string {
+    return `${base.replace(/[\\/]+$/, "")}/${entryName}`;
 }
 
 /** Returns "" at a system root (drive root or `/`), so the UI can hide `..`. */
@@ -316,32 +316,24 @@ async function browse(nextPath = sourcePath.value) {
 }
 
 /**
- * R48：打开向导即展示系统根。现有 CP 端点只接受一个具体 `path`，没有「枚举宿主机根」
- * 的能力（见 evidence README 的契约提案），所以在 UI 侧用 Runtime 自己探测候选根：
- * 先并行探测 26 个盘符，任一成立 ⇒ Windows，只保留真实存在的盘符；全部不成立 ⇒ POSIX，
- * 读 `/`。前端不猜盘符是否存在，只消费 Runtime 的 200/失败结果。
+ * R48/task-980：打开向导即展示系统根。根列表由 CP 的
+ * `GET /workspaces/import-source-roots` 枚举（服务端过滤不可读/不存在的盘符）；
+ * 前端不再并行探测 26 个盘符。端点失败时隐藏根快捷入口，保留手输路径并给出可读提示。
  */
 async function discoverSystemRoots() {
     if (systemRootsLoading.value || systemRoots.value.length > 0) return;
     systemRootsLoading.value = true;
+    systemRootsError.value = "";
     try {
-        const driveLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-        const probes = driveLetters.map((letter) => `${letter}:\\`);
-        const settled = await Promise.allSettled(probes.map((path) => api.listImportSources(path)));
-        const drives: SystemRoot[] = [];
-        for (const [index, result] of settled.entries()) {
-            if (result.status !== "fulfilled") continue;
-            const path = probes[index]!;
-            drives.push({ path, label: path.replace(/\\$/, "") });
-        }
-        if (drives.length > 0) {
-            systemRoots.value = drives;
-        } else {
-            const posix = await api.listImportSources("/").catch(() => null);
-            if (posix) {
-                systemRoots.value = [{ path: posix.path || "/", label: "/" }];
-            }
-        }
+        const discovered = await api.listImportSourceRoots();
+        systemRoots.value = discovered.map((root) => ({
+            path: root.path,
+            label: root.label,
+        }));
+    } catch (cause) {
+        systemRoots.value = [];
+        systemRootsError.value = t("workspace.sourceReadFailed");
+        logger.error("Workspace system root discovery failed", cause);
     } finally {
         systemRootsLoading.value = false;
     }
@@ -691,6 +683,13 @@ watch(
                             {{ root.label }}
                         </button>
                     </div>
+                    <p
+                        v-if="systemRootsError"
+                        class="text-xs text-muted-foreground"
+                        data-testid="workspace-system-roots-error"
+                    >
+                        {{ systemRootsError }}
+                    </p>
                     <p
                         v-if="sourceError"
                         class="text-sm text-destructive"

@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.config.WorkspaceWriteGuard;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
+import com.cc01cc.p.xihe.cp.service.WorkspaceImportSourceService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceNestedReposService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.springframework.http.HttpStatus;
@@ -42,14 +43,35 @@ public class WorkspaceController {
     private final WorkspaceBackendPolicy backendPolicy;
     private final WorkspaceNestedReposService nestedReposService;
     private final RequesterAuthority requesterAuthority;
+    private final WorkspaceImportSourceService importSourceService;
 
     public WorkspaceController(WorkspaceService workspaceService, WorkspaceBackendPolicy backendPolicy,
                                WorkspaceNestedReposService nestedReposService,
-                               RequesterAuthority requesterAuthority) {
+                               RequesterAuthority requesterAuthority,
+                               WorkspaceImportSourceService importSourceService) {
         this.workspaceService = workspaceService;
         this.backendPolicy = backendPolicy;
         this.nestedReposService = nestedReposService;
         this.requesterAuthority = requesterAuthority;
+        this.importSourceService = importSourceService;
+    }
+
+    /**
+     * task-980: host roots for the workspace import wizard. It exposes root names only
+     * (Windows drive letters / POSIX root), never directory contents; per-directory reads
+     * stay on the Runtime-backed {@code /workspaces/import-sources} face. Reuses the
+     * existing workspace read atom instead of inventing a new permission.
+     */
+    @GetMapping("/import-source-roots")
+    @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:read")
+    public ResponseEntity<?> importSourceRoots() {
+        String userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication required");
+        }
+        return ResponseEntity.ok(importSourceService.listRoots());
     }
 
     @GetMapping("/current")

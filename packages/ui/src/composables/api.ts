@@ -3442,6 +3442,10 @@ export type ApiSessionMessage = {
         startedAt: string;
         completedAt?: string;
         result?: string;
+        /** task-988: bounded projection was truncated; see ToolCall.resultTruncated. */
+        resultTruncated?: boolean;
+        /** task-988: full UTF-8 byte size before truncation. */
+        resultBytes?: number;
         truncated?: boolean;
         /** PLAN-0649: CP refusal code; the durable body stays a placeholder. */
         refusalCode?: string;
@@ -5708,6 +5712,13 @@ export const api = {
         entries: Array<{ name: string; kind: string; readable: boolean; size: number }>;
     }> {
         return request(`/workspaces/import-sources?path=${encodeURIComponent(path)}`);
+    },
+    /**
+     * task-980: host roots enumerated by Control Plane (readable drive letters / POSIX root).
+     * The wizard starts here instead of probing 26 drive letters from the browser.
+     */
+    async listImportSourceRoots(): Promise<Array<{ path: string; label: string; kind: string }>> {
+        return request("/workspaces/import-source-roots");
     },
     /**
      * PLAN-0384 T1.3: Runtime-backed direct-attach capability preflight. A reachable Runtime

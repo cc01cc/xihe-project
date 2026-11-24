@@ -19,6 +19,7 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             updateWorkspace: vi.fn<typeof apiModule.api.updateWorkspace>(),
             deleteWorkspace: vi.fn<typeof apiModule.api.deleteWorkspace>(),
             listImportSources: vi.fn<typeof apiModule.api.listImportSources>(),
+            listImportSourceRoots: vi.fn<typeof apiModule.api.listImportSourceRoots>(),
             preflightDirectAttach: vi.fn<typeof apiModule.api.preflightDirectAttach>(),
         },
     };
@@ -79,12 +80,26 @@ function preflightResult(
     } as const;
 }
 
-/** R48：打开向导即展示系统根。默认模拟 POSIX（26 个盘符全部失败，`/` 成功）。 */
+/**
+ * R48/task-980：系统根由 CP `listImportSourceRoots` 提供；本 helper 同时模拟每根下的目录读取。
+ * 默认 POSIX：根列表只有 `/`。
+ */
 function mockSystemRoots(
     listings: Record<string, Entry[]>,
     roots: { drives?: string[]; posix?: boolean } = { posix: true },
 ) {
     const drives = new Set(roots.drives ?? []);
+    const discovered =
+        roots.drives && roots.drives.length > 0
+            ? roots.drives.map((path) => ({
+                  path,
+                  label: path.replace(/[\\/]$/, "") || "/",
+                  kind: path.match(/^[A-Za-z]:/) ? "drive" : "root",
+              }))
+            : roots.posix === false
+              ? []
+              : [{ path: "/", label: "/", kind: "root" }];
+    mockedApi.listImportSourceRoots.mockResolvedValue(discovered);
     mockedApi.listImportSources.mockImplementation((path: string) => {
         if (drives.has(path) || (roots.posix !== false && path === "/") || path in listings) {
             return Promise.resolve({ path, entries: listings[path] ?? [] });
@@ -250,6 +265,40 @@ describe("WorkspaceCreateDialog (task-957)", () => {
         expect(
             browserEntry("plain")!.querySelector('[data-testid="workspace-entry-git"]'),
         ).toBeNull();
+    });
+
+    it("R46/task-980：系统根来自 CP 根枚举端点，不再并行探测 26 个盘符", async () => {
+        mockSystemRoots(
+            {
+                "C:\\": [{ name: "repo", kind: "directory", readable: true, size: 0 }],
+            },
+            { drives: ["C:\\"] },
+        );
+        await mountCreateDialog(wrappers);
+
+        await vi.waitFor(() => {
+            const chip = document.body.querySelector('[data-testid="workspace-system-root"]');
+            expect(chip?.textContent?.trim()).toBe("C:");
+            expect(browserEntry("repo")).toBeTruthy();
+        });
+        // 反证：把 discoverSystemRoots 改回 26 盘符探测时, 下面的调用次数断言会红。
+        expect(mockedApi.listImportSourceRoots).toHaveBeenCalledTimes(1);
+        expect(mockedApi.listImportSources).toHaveBeenCalledTimes(1);
+        expect(mockedApi.listImportSources).toHaveBeenCalledWith("C:\\");
+    });
+
+    it("R46/task-980：根枚举失败时回落到手输路径并给出可读提示", async () => {
+        mockedApi.listImportSourceRoots.mockRejectedValue(
+            problemError(502, "RUNTIME_SOURCE_UNAVAILABLE"),
+        );
+        await mountCreateDialog(wrappers);
+
+        const error = await bodyEl<HTMLElement>('[data-testid="workspace-system-roots-error"]');
+        expect(error.textContent).toContain(i18n.global.t("workspace.sourceReadFailed"));
+        expect(
+            document.body.querySelectorAll('[data-testid="workspace-system-root"]'),
+        ).toHaveLength(0);
+        expect(document.body.querySelector('[data-testid="workspace-root-path"]')).toBeTruthy();
     });
 
     it("R43 字段联动：选目录前执行后端不可用，选目录后按 preflight 结果解禁", async () => {

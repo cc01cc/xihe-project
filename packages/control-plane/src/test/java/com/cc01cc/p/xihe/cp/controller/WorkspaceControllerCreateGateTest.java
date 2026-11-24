@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
+import com.cc01cc.p.xihe.cp.service.WorkspaceImportSourceService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceNestedReposService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.AfterEach;
@@ -39,7 +40,7 @@ class WorkspaceControllerCreateGateTest {
         WorkspaceBackendPolicy disabledPolicy = new WorkspaceBackendPolicy("");
         disabledPolicy.validate();
         controller = new WorkspaceController(workspaceService, disabledPolicy, nestedReposService,
-                Mockito.mock(RequesterAuthority.class));
+                Mockito.mock(RequesterAuthority.class), Mockito.mock(WorkspaceImportSourceService.class));
         TenantContext.setUserId("user-1");
     }
 
@@ -94,7 +95,7 @@ class WorkspaceControllerCreateGateTest {
         enabled.validate();
         WorkspaceNestedReposService nestedReposService = Mockito.mock(WorkspaceNestedReposService.class);
         WorkspaceController relaxed = new WorkspaceController(workspaceService, enabled, nestedReposService,
-                Mockito.mock(RequesterAuthority.class));
+                Mockito.mock(RequesterAuthority.class), Mockito.mock(WorkspaceImportSourceService.class));
         when(workspaceService.createWorkspace(any(), any(), eq("user-1"), any(), any(),
                 any(), any(), any(), any(), any()))
                 .thenThrow(new CpApiException(HttpStatus.BAD_REQUEST, "SEEN_BY_SERVICE", "reached"));
