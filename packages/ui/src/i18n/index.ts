@@ -1,6 +1,6 @@
 import { createI18n } from "vue-i18n";
 
-const messages = {
+export const messages = {
     "zh-CN": {
         // TODO(i18n): 中文措辞待 B-7 落位定稿后统一打磨（PLAN-0660 T5.21）；键名已按 design 冻结。
         // task-45：错误面统一入口（lib/errorMessages.ts#presentError）的兜底文案。
@@ -167,7 +167,7 @@ const messages = {
             // task-509 补提交：403 卡**仍点名缺失原子**（`OrgMembersView.spec.ts` 与
             // `packages/ui/AGENTS.md` 的 atom-denied 口径都要求点名），只把内部术语换成用户话。
             title: "组织成员",
-            desc: "按组织架构查看人类成员与智能体；新建/改名/搬移单元、加成员、移成员、改角色都已接真实契约，写入失败时照显服务端原文。",
+            desc: "按组织架构查看人类成员与智能体。新建、改名、搬移单元，添加或移出成员、修改角色都可以在这里完成；保存失败时会显示原因，并保留你已填写的内容。",
             searchPlaceholder: "在可见组织树内搜索名称…",
             searchEmpty: "没有命中的组织单元。",
             treeEmpty: "当前账号不在任何组织单元中，或组织树为空。",
@@ -257,12 +257,12 @@ const messages = {
             // task-136（J1/J2/J3）：写面接真实契约后的文案。服务端原文刻意不改写 ——
             // code/detail/requestId 由组件原样渲染，这里只提供标签。键名不出现在模板注释里（test-utils 裸键护栏）。
             writeHint:
-                "写操作已接真实契约：新建/改名/搬移单元、加成员/移成员/改角色。每次写入成功后都会重新读取读面。",
+                "在这里新建、改名、搬移单元，或添加、移出成员、修改角色。每次保存成功后，页面都会自动刷新为最新结果。",
             writeNeedsSelection: "先在左栏选择一个组织单元。",
             writeCancel: "取消",
             writeSubmit: "提交",
             writeBusy: "提交中…",
-            writeOk: "已提交，读面已重新读取。",
+            writeOk: "已保存，页面已刷新。",
             writeNameLabel: "名称",
             writeParentLabel: "父单元",
             writeParentTop: "（顶层单元，没有父单元）",
@@ -291,14 +291,14 @@ const messages = {
             writeConfirmDerivedPartial:
                 "可能不全：服务端把你看不见的工作区也算进去了，这里只列出当前账号可见的那部分。",
             writeConfirmDerivedNone:
-                "本地列不出清单：被移动的不是你本人，契约没有「按主体反查工作区」的端点。",
+                "本地无法列出完整清单：被移动的不是你本人，目前也无法按成员反查其名下的工作区。",
             writeConfirmDerivedEmpty: "在你可见的工作区里，该成员没有任何 OWNER 工作区。",
             writeConfirmSelf:
-                "被移动的就是你自己：移出后你会立刻失去这棵子树的读面，再想搬回原单元会得到 403「org unit is outside the caller's governance scope」。",
+                "被移动的就是你自己：移出后你会立刻失去这个子树的查看权限；再想搬回原单元会被拒绝（该单元不在你的管理范围内）。",
             writeConfirmMove: "确认移动",
             writeConfirmRemoveTitle: "确认把该成员移出这个单元？",
             writeConfirmRemoveSelf:
-                "被移除的是你自己：移除后你会立刻失去这棵子树的读面，且当前没有接口能把你放回去。",
+                "被移除的是你自己：移除后你会立刻失去这个子树的查看权限，而且目前无法自行恢复。",
             writeConfirmRemove: "确认移出",
             writeConfirmRemoveOther: "移出只影响这个单元的成员列表，不动成员本身的账号或角色绑定。",
             writeProblemTitle: "服务端拒绝了这次写入（原文）",
@@ -306,9 +306,8 @@ const messages = {
             writeProblemCode: "code",
             writeProblemDetail: "detail",
             writeProblemRequest: "requestId",
-            writeProblemNoCode: "响应里没有 code（网络错误或非契约错误）。",
-            writeRolesBaselineUnknown:
-                "契约没有「读取角色绑定」的端点，所以这个单元当前到底绑了哪些角色，界面无从得知。",
+            writeProblemNoCode: "服务端没有返回错误码（可能是网络问题或未知错误）。",
+            writeRolesBaselineUnknown: "目前无法读取这个单元已绑定的角色，所以这里不显示角色列表。",
             writeRolesBaselineHint:
                 "角色写入是整集覆盖：先以空集建立基线，再逐条加上；直接提交会静默清掉既有绑定。",
             writeRolesEstablish: "以空集建立基线",
@@ -1004,7 +1003,7 @@ const messages = {
             agentEffectiveCapEmpty: "当前无任何生效权限",
             agentEffectiveCapProvenancePrincipal: "主体授权行",
             agentEffectiveCapProvenanceBinding: "绑定授权行",
-            agentEffectiveCapReadFace: "本读面默认授予：工作区成员",
+            agentEffectiveCapReadFace: "本工作区的默认权限：工作区成员",
             agentEffectiveCapProvenanceLabelled: "有来源标签 {labelled} 条 · 来源未知 {unknown} 条",
             agentEffectiveCapSource: {
                 role: "角色授权",
@@ -1383,9 +1382,9 @@ const messages = {
                     "到点自动唤醒会话或执行任务；错过的任务不会自动补跑，会停在这里等你处理。",
                 overviewTitle: "自动化任务总览",
                 overviewSubtitle: "实例内跨工作区的自动化任务清单。",
-                notWiredTitle: "数据面未接入：本页暂无任务清单，也不能开始操作",
+                notWiredTitle: "本页暂时无法显示任务清单",
                 notWiredBody:
-                    "清单数据来自控制面的 {endpoint}（来源 {sourceTask}）。该端点尚未并入当前构建，所以这里既不显示任务、也不显示条数 —— 未接入的状态如实呈现，不用空列表冒充「本来就没有任务」。",
+                    "任务数据还没接入当前环境，所以这里既不显示任务，也不显示数量。你不需要做其他操作，接入后会自动出现。",
                 create: "新建自动化任务",
                 refresh: "刷新",
                 loading: "正在加载自动化任务…",
@@ -2442,7 +2441,7 @@ const messages = {
                 // 智能体撤出资源面后这个键**物理不可达**（三层标签由落点页各自持有）。
             },
             tabsLabel: "资源层",
-            disabledHint: "置灰的层仍留在页面上（不隐藏），点了不会切过去；原因见下。",
+            disabledHint: "这些层当前不可切换，下方说明了原因。",
             reasonNoWorkspace: "该层的数据按工作区归属：当前没有工作区上下文",
             // task-22（C-4 同族，树外）：点名能力位用用户语言，不写 wire 标识 instance:admin。
             reasonCapability: "需要实例管理员能力",
@@ -2706,7 +2705,7 @@ const messages = {
                 description:
                     "以当前身份查看生效授权，并查询某个动作是否被允许；页内不提供选择他人的入口。",
                 scopeNote:
-                    "本页只展示读面可得的来源；spawn / template 与按主体反查的凭据绑定、插件绑定来源需新增 CP 读面，尚未实现",
+                    "本页只展示当前账号能看到的数据来源；其余来源暂时无法查看，因此不在此列出。",
                 selfTitle: "我的生效授权",
                 selfHint:
                     "按来源分组列出投影里的每个原子；同一原子在不同层会各占一行，缺少 sources 的原子不计入任何来源。",
@@ -2723,13 +2722,13 @@ const messages = {
                     plugin_binding: "插件绑定",
                 },
                 readface: {
-                    title: "六来源读面",
-                    hint: "三档读面：有读面 / 仅反向查询 / 无读面。",
+                    title: "数据来源可用情况",
+                    hint: "三种情况：可以直接查看 / 只能按主体查询 / 暂时无法查看。",
                     open: "打开",
-                    noInference: "无读面的来源不展示任何推断数据。",
-                    tierA: "有读面",
-                    tierB: "仅反向查询",
-                    tierC: "无读面",
+                    noInference: "暂时无法查看的来源不展示任何推测数据。",
+                    tierA: "可以直接查看",
+                    tierB: "只能按主体查询",
+                    tierC: "暂时无法查看",
                     role: "角色",
                     credential_binding: "凭据绑定",
                     agent_default: "主体默认",
@@ -2739,15 +2738,16 @@ const messages = {
                 },
                 subjects: {
                     title: "按主体",
-                    workspaceHint: "智能体主体只在工作区上下文里有读面，角色与上限都来自该工作区。",
+                    workspaceHint:
+                        "智能体主体只有在工作区里才能查看；角色与权限上限都来自该工作区。",
                     pickWorkspace: "选择工作区",
                     agentsEmpty: "该工作区没有绑定智能体。",
                     snapshotAtoms: "快照原子 {count} 条",
                     roles: "角色绑定",
-                    rolesUnavailable: "角色读面不可用。",
+                    rolesUnavailable: "暂时读不到角色。",
                     rolesEmpty: "该主体没有角色绑定。",
                     cap: "生效上限",
-                    capUnavailable: "生效上限读面不可用：该主体未绑定此工作区。",
+                    capUnavailable: "暂时读不到权限上限：该主体未绑定此工作区。",
                     capNote:
                         "上限来源：{binding}；principalGrantIds {count} 条；grant 来源：{sources}。",
                     capSourcesNone: "无可用的 grant 行",
@@ -2938,7 +2938,7 @@ const messages = {
             providerPartitionDesc:
                 "自上而下：先在连接管理新建连接并就地设定默认（默认连接置顶、每连接默认模型置顶、每模型参数就地配置）。",
             providerPartitionDescInstance:
-                "实例层与个人层是同一套结构：可以在实例层建多条实例连接与多个模型，配出来的模型属于实例，本实例下的主体按权限取用；「设为默认」写出的 profile 只是该层的默认身份（派生值），不是第二套真源。",
+                "实例层与个人层使用同一套结构：可以在实例层创建多条连接与多个模型，这些模型属于实例，本实例下的主体按权限使用。「设为默认」只是把这条配置记为该层的默认身份，不会另外保存一份。",
             providerInstanceNote:
                 "模型配置按 工作区 > 工作区默认 > 个人 > 实例 的顺序取第一组存在的配置；连接归属提供该配置的那一层，仅当该层连接不可用时才回退到实例共享连接，不会改用其他层的个人或工作区连接。",
             llmInstanceDefaultTitle: "实例默认模型",
@@ -2994,7 +2994,7 @@ const messages = {
                 navLabel: "Provider 连接导航",
                 connected: "已连接",
                 connectionCount: "{count} 个连接",
-                needsKeyBanner: "{count} 条连接需要重新输入密钥",
+                needsKeyBanner: "{count} 条连接尚未配置密钥",
                 empty: "尚未新建连接，点击右上角「新建连接」开始。",
                 noMatch: "没有匹配的连接",
                 badgeDefault: "默认",
@@ -3305,7 +3305,7 @@ const messages = {
             embeddingDimension: "维度",
             embeddingEffectiveScope: "生效层",
             embeddingModelSource: "模型来源",
-            embeddingModelSourcePinned: "服务端固定契约",
+            embeddingModelSourcePinned: "由服务端固定",
             embeddingSelectRequired: "请先选择嵌入连接",
             embeddingSaved: "嵌入配置已保存",
             embeddingSaveFailed: "嵌入配置保存失败",
@@ -3917,8 +3917,7 @@ const messages = {
                     // task-401 编辑半（cp-1 task-413 / dedd832a5 已把模型三字段接进 PATCH）。
                     editCta: "编辑模型意图",
                     editTitle: "编辑模型意图",
-                    editBody:
-                        "改这条智能体的默认模型与白名单。名称与说明不在这个写面上（契约只收模型意图与文档）。",
+                    editBody: "修改这条智能体的默认模型与可用模型范围。名称与说明不在这里修改。",
                     currentIntent: "当前模型意图",
                     currentIntentNone: "未设置（沿用平台默认）",
                     currentWhitelist: "当前白名单：{value}",
@@ -3956,7 +3955,7 @@ const messages = {
                     skillsForbidden: "需要实例管理员授权（MANAGE_AGENT_PRINCIPALS）",
                     // task-402 真 HTTP 照出：名字契约是字母/汉字/数字，违者 400 INVALID_NAME_FORMAT。
                     nameHint: "只能用字母、汉字与数字，不能以数字开头，不含空格或符号。",
-                    nameInvalid: "名字格式不合契约：只能用字母、汉字与数字，不能以数字开头。",
+                    nameInvalid: "名称格式不正确：只能用字母、汉字与数字，且不能以数字开头。",
                     disabled: "已停用",
                     deleteTitle: "删除平台智能体",
                     deleteBody: "删除「{name}」后，所有工作区都将失去这个智能体。此操作不可撤销。",
@@ -4264,7 +4263,7 @@ const messages = {
         agentBindings: {
             title: "工作区绑定",
             workspacesAriaLabel: "工作区绑定",
-            desc: "决定这个智能体在哪些工作区可以被委派。勾选即绑定，取消即解绑；每次保存都逐条写服务端并重新读取读面。",
+            desc: "决定这个智能体可以在哪些工作区被委派。勾选即绑定，取消即解绑；每次保存都会逐条写入并自动刷新结果。",
             refresh: "重新读取",
             loading: "正在读取工作区与权限…",
             readFailed:
@@ -4277,22 +4276,22 @@ const messages = {
             badgeDefault: "工作区默认",
             stateBound: "已绑定",
             stateUnbound: "未绑定",
-            stateUnreadable: "读面失败：读不到这个工作区的绑定状态，不能当作未绑定处理。",
+            stateUnreadable: "读取失败：读不到这个工作区的绑定状态，请稍后重试。",
             save: "保存绑定",
             saving: "正在保存…",
-            saved: "已保存，读面已重新读取。",
+            saved: "已保存，页面已刷新。",
             discard: "撤销选择",
             pendingCount: "待提交 {count} 项",
             saveFailed: "保存工作区绑定时服务端拒绝了这次请求。",
             crumbSubjects: "智能体主体",
             crumbBindings: "绑定",
-            nameUnavailable: "名称读面未提供",
+            nameUnavailable: "暂未提供名称",
             subjectIdLabel: "主体 ID",
             openPage: "工作区绑定",
             rolesLoading: "正在读取该工作区的角色…",
             rolesNone: "该工作区还没有绑定任何角色。",
             rolesNotFound: "这个工作区下读不到该主体的角色（这是「读不到」，不是「没有角色」）。",
-            rolesFallback: "角色读面返回了错误，因此读不到这个主体在该工作区有哪些角色。",
+            rolesFallback: "读取角色失败，因此看不到这个主体在该工作区有哪些角色。",
             defaultSet: "设为工作区默认",
             defaultClear: "取消工作区默认",
             defaultFailed: "修改工作区默认智能体时服务端拒绝了这次请求。",
@@ -4785,7 +4784,7 @@ const messages = {
         },
         orgMembers: {
             title: "Org members",
-            desc: "Browse humans and agent principals by org structure; creating, renaming and moving units plus member and role changes all call the real contract, and server errors are shown verbatim.",
+            desc: "Browse humans and agent principals by org structure. Create, rename or move units, add or remove members, and change roles here; if saving fails, the reason is shown and your input is kept.",
             searchPlaceholder: "Search names in the visible tree…",
             searchEmpty: "No org unit matched.",
             treeEmpty: "This account belongs to no org unit, or the tree is empty.",
@@ -4886,12 +4885,12 @@ const messages = {
             // task-136 (J1/J2/J3): copy for the write surface. The server raw text is never rewritten —
             // code/detail/requestId are rendered verbatim by the component; these are labels only.
             writeHint:
-                "Write actions are wired to the real contract: create/rename/move units, add member, remove member, change role. Every successful write re-reads the surface.",
+                "Create, rename or move units, add or remove members, change roles. After every successful save the page refreshes to the latest result.",
             writeNeedsSelection: "Select an org unit in the left column first.",
             writeCancel: "Cancel",
             writeSubmit: "Submit",
             writeBusy: "Submitting…",
-            writeOk: "Submitted; the read surface was reloaded.",
+            writeOk: "Saved; the page has been refreshed.",
             writeNameLabel: "Name",
             writeParentLabel: "Parent unit",
             writeParentTop: "(top level, no parent)",
@@ -4922,14 +4921,14 @@ const messages = {
             writeConfirmDerivedPartial:
                 "May be incomplete: the server also counts workspaces you cannot see; only the part visible to this account is listed.",
             writeConfirmDerivedNone:
-                "No local list: the subject is not you, and the contract has no endpoint to look up workspaces by subject.",
+                "A full list isn't available here: the subject is not you, and workspaces cannot be looked up by member yet.",
             writeConfirmDerivedEmpty: "Among the workspaces you can see, this member owns none.",
             writeConfirmSelf:
-                'The subject is you: after the move you immediately lose read access to this subtree, and moving yourself back returns 403 "org unit is outside the caller\'s governance scope".',
+                "The subject is you: after the move you immediately lose access to this subtree, and moving yourself back will be refused because the unit is outside your management scope.",
             writeConfirmMove: "Confirm move",
             writeConfirmRemoveTitle: "Remove this member from the unit?",
             writeConfirmRemoveSelf:
-                "The subject is you: after removal you immediately lose read access to this subtree, and no endpoint can put you back.",
+                "The subject is you: after removal you immediately lose access to this subtree, and you cannot restore it yourself.",
             writeConfirmRemove: "Confirm removal",
             writeConfirmRemoveOther:
                 "Removal only changes this unit's member list; the member's account and role bindings are untouched.",
@@ -4939,9 +4938,9 @@ const messages = {
             writeProblemDetail: "detail",
             writeProblemRequest: "requestId",
             writeProblemNoCode:
-                "No code in the response (network failure or a non-contract error).",
+                "The server returned no error code (possibly a network problem or an unknown error).",
             writeRolesBaselineUnknown:
-                "The contract has no endpoint to read role bindings, so the UI cannot know which roles this unit currently holds.",
+                "The roles bound to this unit cannot be read right now, so no role list is shown here.",
             writeRolesBaselineHint:
                 "Role writes replace the whole set: establish an empty baseline first, then add one by one; submitting directly silently clears existing bindings.",
             writeRolesEstablish: "Establish empty baseline",
@@ -5622,7 +5621,7 @@ const messages = {
             agentEffectiveCapEmpty: "No permissions in effect",
             agentEffectiveCapProvenancePrincipal: "Principal grant rows",
             agentEffectiveCapProvenanceBinding: "Binding grant rows",
-            agentEffectiveCapReadFace: "Read-face default grant: workspace members",
+            agentEffectiveCapReadFace: "Default permission in this workspace: workspace members",
             agentEffectiveCapProvenanceLabelled:
                 "{labelled} labelled · {unknown} with no source label",
             agentEffectiveCapSource: {
@@ -6014,10 +6013,9 @@ const messages = {
                     "Wake a session or run a job at a set time; missed tasks never rerun automatically and wait here for your decision.",
                 overviewTitle: "Automations overview",
                 overviewSubtitle: "Automation tasks across every workspace in this instance.",
-                notWiredTitle:
-                    "Data surface not connected: no task list is available here, and no action can start",
+                notWiredTitle: "The task list can't be shown here yet",
                 notWiredBody:
-                    "The list comes from the control plane at {endpoint} (source {sourceTask}). That endpoint is not part of the current build yet, so this page shows neither tasks nor counts — that state is shown as-is instead of letting an empty list suggest there are no tasks.",
+                    "Task data isn't available in this environment yet, so no tasks or counts are shown. Nothing else is required from you; they will appear once connected.",
                 create: "New automation",
                 refresh: "Refresh",
                 loading: "Loading automations…",
@@ -7093,8 +7091,7 @@ const messages = {
                 // task-96：`agents` 段已删（与 zh 同步）—— 资源面不再有智能体，层标签键不可达。
             },
             tabsLabel: "Resource layer",
-            disabledHint:
-                "Dimmed layers stay on the page (never hidden) and cannot be selected; reasons below.",
+            disabledHint: "These layers cannot be selected right now; the reason is shown below.",
             reasonNoWorkspace:
                 "This layer is scoped to a workspace, and there is no workspace context right now",
             // task-22 (same family as C-4, outside the settings subtree): user language, no wire token.
@@ -7367,7 +7364,7 @@ const messages = {
                 description:
                     "Inspect your own effective grants and ask whether an action is allowed; this page has no subject picker.",
                 scopeNote:
-                    "This page only shows sources that have a read face; spawn / template, and per-subject lookup of credential-binding / plugin-binding sources, need new control-plane read faces and are not implemented yet",
+                    "This page only shows data sources your account can access; other sources cannot be shown yet.",
                 selfTitle: "My effective grants",
                 selfHint:
                     "Atoms grouped by source; the same atom appears once per layer, and atoms without sources are not counted under any source.",
@@ -7384,13 +7381,13 @@ const messages = {
                     plugin_binding: "Plugin binding",
                 },
                 readface: {
-                    title: "Read faces of the six sources",
-                    hint: "Three tiers: has read face / reverse lookup only / no read face.",
+                    title: "Data source availability",
+                    hint: "Three cases: viewable directly / lookup by subject only / not viewable yet.",
                     open: "Open",
-                    noInference: "Sources without a read face show no inferred data.",
-                    tierA: "Has read face",
-                    tierB: "Reverse lookup only",
-                    tierC: "No read face",
+                    noInference: "Sources that cannot be viewed show no inferred data.",
+                    tierA: "Viewable directly",
+                    tierB: "Lookup by subject",
+                    tierC: "Not viewable",
                     role: "Role",
                     credential_binding: "Credential binding",
                     agent_default: "Principal default",
@@ -7401,16 +7398,16 @@ const messages = {
                 subjects: {
                     title: "By subject",
                     workspaceHint:
-                        "Agent principals only have a read face inside a workspace; roles and caps come from that workspace.",
+                        "Agent principals can only be viewed inside a workspace; roles and permission caps come from that workspace.",
                     pickWorkspace: "Pick a workspace",
                     agentsEmpty: "This workspace has no bound agents.",
                     snapshotAtoms: "{count} snapshot atoms",
                     roles: "Role bindings",
-                    rolesUnavailable: "The role read face is unavailable.",
+                    rolesUnavailable: "Roles can't be read right now.",
                     rolesEmpty: "This principal has no role binding.",
                     cap: "Effective cap",
                     capUnavailable:
-                        "The effective-cap read face is unavailable: this principal is not bound to this workspace.",
+                        "The permission cap can't be read right now: this principal is not bound to this workspace.",
                     capNote:
                         "Cap source: {binding}; {count} principalGrantIds; grant sources: {sources}.",
                     capSourcesNone: "no grant rows",
@@ -7585,7 +7582,7 @@ const messages = {
             providerPartitionDesc:
                 "Top-down: create connections in Connections and set defaults in place (default connection pinned, each connection's default model pinned, per-model parameters inline).",
             providerPartitionDescInstance:
-                'The instance layer mirrors the personal layer: create several instance connections and several models there. Models configured at this layer belong to the instance and are consumed by its subjects according to their permissions; the profile written by "Set as default" is only this layer\'s default identity (a derived value), not a second source of truth.',
+                'The instance layer mirrors the personal layer: create several instance connections and several models there. Models configured at this layer belong to the instance and are consumed by its subjects according to their permissions. "Set as default" only records this layer\'s default identity; no separate copy is stored.',
             providerInstanceNote:
                 "Profiles resolve as a whole unit in the order workspace > workspace-default > personal > instance; the connection belongs to the layer that supplied the profile, falling back to the shared instance connection only when that layer's connection is unavailable - connections from other layers are never used.",
             llmInstanceDefaultTitle: "Instance default model",
@@ -7644,7 +7641,7 @@ const messages = {
                 navLabel: "Provider connection navigation",
                 connected: "Connected",
                 connectionCount: "{count} connection(s)",
-                needsKeyBanner: "{count} connection(s) need a new key",
+                needsKeyBanner: "{count} connection(s) have no key yet",
                 empty: 'No connections yet. Click "New connection" above to start.',
                 noMatch: "No matching connections",
                 badgeDefault: "Default",
@@ -8622,7 +8619,7 @@ const messages = {
                     editCta: "Edit model intent",
                     editTitle: "Edit model intent",
                     editBody:
-                        "Change this agent's default model and allow-list. Name and description are not on this write face (the contract takes model intent and documents only).",
+                        "Change this agent's default model and which models it may use. Name and description are not edited here.",
                     currentIntent: "Current model intent",
                     currentIntentNone: "Not set (inherits the platform default)",
                     currentWhitelist: "Current whitelist: {value}",
@@ -8664,7 +8661,7 @@ const messages = {
                     nameHint:
                         "Letters, Chinese characters and digits only; must not start with a digit; no spaces or symbols.",
                     nameInvalid:
-                        "The name does not match the contract: letters, Chinese characters and digits only, not starting with a digit.",
+                        "Invalid name: use letters, Chinese characters and digits only, and don't start with a digit.",
                     disabled: "Disabled",
                     deleteTitle: "Delete platform agent",
                     deleteBody:
