@@ -457,16 +457,25 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
             lockHolder = executor.submit(() -> transactions.execute(status -> {
                 sessionRepository.findByIdForUpdate(UUID.fromString(parent.parentSessionId)).orElseThrow();
                 sessionLocked.countDown();
-                awaitLatch(releaseLock, "session lock release");
+                // task-1001: 本用例要的是「锁超时」而不是「持锁方自己放弃」——持锁方必须活得比
+                // cp.lock-timeout-ms(5s) 更长，否则先释放锁会把断言变成"到底谁先超时"的赛跑。
+                awaitLatch(releaseLock, "session lock release", 30);
                 return null;
             }));
 
             assertTrue(sessionLocked.await(5, TimeUnit.SECONDS), "lock holder must own the Session row");
             Future<ChatRunCancellationService.CancelClaim> cancellation = executor.submit(
-                    () -> cancellationService.cancelSerialized(
-                            parent.parentRunId, parent.parentSessionId, userId, workspaceId, "timeout"));
+                    () -> transactions.execute(status -> {
+                        // task-1001: 显式信号取代固定窗口——先给本线程事务打上 application_name，
+                        // 再用 pg_stat_activity 确认它**真的**阻塞在 Session 行锁上，避免"5s 锁超时 vs
+                        // 8s 等待窗只剩 3s 余量"在整机负载下被吃穿（同文件 :330-343 同一套路）。
+                        jdbcTemplate.execute("SET LOCAL application_name = 't25-cancel-lock-timeout'");
+                        return cancellationService.cancelSerialized(
+                                parent.parentRunId, parent.parentSessionId, userId, workspaceId, "timeout");
+                    }));
+            awaitPostgresLockWait("t25-cancel-lock-timeout");
             ExecutionException lockFailure = assertThrows(ExecutionException.class,
-                    () -> cancellation.get(8, TimeUnit.SECONDS));
+                    () -> cancellation.get(20, TimeUnit.SECONDS));
             assertTrue(lockFailure.getCause() instanceof PessimisticLockingFailureException,
                     "the Session lock timeout must surface as a persistence lock failure");
             assertEquals("running", runStatus(parent.parentRunId()),
@@ -559,8 +568,12 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     private record CancelDeleteOutcome(ChatRunCancellationService.CancelClaim claim, Future<?> deletion) {}
 
     private static void awaitLatch(CountDownLatch latch, String description) {
+        awaitLatch(latch, description, 10);
+    }
+
+    private static void awaitLatch(CountDownLatch latch, String description, int seconds) {
         try {
-            if (!latch.await(10, TimeUnit.SECONDS)) {
+            if (!latch.await(seconds, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("Timed out waiting for " + description);
             }
         } catch (InterruptedException error) {
