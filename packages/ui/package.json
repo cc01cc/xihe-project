@@ -66,7 +66,7 @@
         "vue": "^3.5.45",
         "vue-draggable-plus": "0.6.1",
         "vue-i18n": "^11.4.14",
-        "vue-router": "^5.3.1",
+        "vue-router": "^5.5.1",
         "vue-sonner": "^2.0.9"
     },
     "devDependencies": {
