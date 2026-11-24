@@ -72,12 +72,13 @@ describe("provider resolver copy（task-152 定稿语义）", () => {
         expect(String(settings(en).llmInstanceDefaultDesc)).toContain("the connection follows");
         // providerPartitionDescInstance 经 task-284/D-1140 四层文案改写，改述「分区结构 + 默认身份是派生值」，
         // 不再复述连接归属 —— 该语义由 providerInstanceNote / providerHub.scopeNoteBody 承载（见上一条用例，
-        // 仍 toBe 定稿句）⇒ 属合法改写而非文案回归。此处同步到现行正确文案的正向锚点（不是第二套真源）。
+        // 仍 toBe 定稿句）⇒ 属合法改写而非文案回归。此处同步到现行正确文案的正向锚点。
         expect(String(settings(zh).providerPartitionDescInstance)).toContain("默认身份");
-        expect(String(settings(zh).providerPartitionDescInstance)).toContain("不是第二套真源");
+        // task-1011：旧锚点「不是第二套真源」本身就是被禁的内部术语，改成改写后的用户语言锚点。
+        expect(String(settings(zh).providerPartitionDescInstance)).toContain("不会另外保存一份");
         expect(String(settings(en).providerPartitionDescInstance)).toContain("default identity");
         expect(String(settings(en).providerPartitionDescInstance)).toContain(
-            "not a second source of truth",
+            "no separate copy is stored",
         );
         // 本意（负断言，不弱化）：两个实例层描述都不许回流「USER 直连」旧口径。
         for (const value of [

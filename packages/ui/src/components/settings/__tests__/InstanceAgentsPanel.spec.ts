@@ -965,7 +965,8 @@ describe("InstanceAgentsPanel · task-430 创建面契约收紧", () => {
         await wrapper.get('[data-testid="instance-agents-create-submit"]').trigger("click");
         await flushPromises();
         const error = wrapper.get('[data-testid="instance-agents-action-error"]');
-        expect(error.text()).toContain("名字格式不合契约");
+        // task-1011 的 `nameInvalid` 已改成用户语言（旧文案含「契约」这个内部词）。
+        expect(error.text()).toContain("名称格式不正确");
         expect(error.text()).not.toContain("name format");
         expect(wrapper.find('[data-testid="instance-agents-create-dialog"]').exists()).toBe(true);
         wrapper.unmount();

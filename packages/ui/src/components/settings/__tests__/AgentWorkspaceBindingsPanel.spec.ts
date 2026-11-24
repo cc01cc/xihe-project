@@ -119,9 +119,10 @@ describe("AgentWorkspaceBindingsPanel（task-153 S1）", () => {
         const unreadable = wrapper.find('[data-testid="agent-bindings-check-w-2"]');
         expect(unreadable.attributes("disabled")).toBeDefined();
         const stateText = wrapper.find('[data-testid="agent-bindings-state-w-2"]').text();
-        expect(stateText).toContain("读面失败");
+        // task-1011 把「读面」换成用户语言：状态前缀从「读面失败」改为「读取失败」。
+        expect(stateText).toContain("读取失败");
         // 不能退化成「未绑定」这个状态结论（文案里"不能当作未绑定处理"是解释，允许多一句）。
-        expect(stateText.startsWith("读面失败")).toBe(true);
+        expect(stateText.startsWith("读取失败")).toBe(true);
         expect(stateText).not.toBe("未绑定");
 
         // 可读行仍可操作：只禁读不到的那一行，不把整块变灰。

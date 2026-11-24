@@ -81,7 +81,10 @@ describe("API request built-ins · task-964", () => {
         const wrapper = mountPanel();
         await flushPromises();
         const nav = wrapper.get('nav[aria-label="请求模板"]');
-        expect(nav.text()).toContain("OpenAI 对话补全（内置）");
+        // 期望值从 i18n 派生（task-1011 把显示名改为英文全称），不在这里再抄一遍字面量。
+        expect(nav.text()).toContain(
+            `${i18n.global.t("settings.apiTypeOpenaiChatCompletions")}（内置）`,
+        );
         expect(nav.text()).not.toContain("Built-in");
         expect(nav.text()).not.toContain("default v2");
         expect(wrapper.text()).not.toContain("@1");
@@ -147,7 +150,9 @@ describe("API request built-ins · task-964", () => {
         await flushPromises();
         const nav = wrapper.get('nav[aria-label="请求模板"]');
         expect(nav.text()).toContain("内置模板（只读）");
-        expect(nav.text()).toContain("OpenAI 对话补全（内置）");
+        expect(nav.text()).toContain(
+            `${i18n.global.t("settings.apiTypeOpenaiChatCompletions")}（内置）`,
+        );
         const row = wrapper.get(`[data-testid="api-request-builtin-row-${builtin.id}"]`);
         await row.get("button").trigger("click");
         await flushPromises();
