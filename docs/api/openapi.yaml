@@ -9349,6 +9349,7 @@ components:
         resource: { type: string }
         grantId: { type: string, format: uuid }
         grantSource: { type: string, description: 'how the grant was created, for example role or template' }
+        originPresetId: { type: [string, 'null'], format: uuid, description: 'task-933 / R39 (D-1926): for an assigned row, the preset it was imported from. Display and compare/realign provenance only — the row authorizes the atom, the preset is a read-only template and never participates in the decision. Every other source keeps it null.' }
     AuthorizationExplainLevel:
       type: object
       additionalProperties: false

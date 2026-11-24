@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-21",
+  "updated": "2026-11-24",
   "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在五类白名单内（A03-xihe/packages/ui/ · A12-arbiter/packages/arbiter/tests/ · internal/A03-xihe/scripts/ · scripts/ · A03-xihe/packages/control-plane/src/test/；task-53 放宽、task-173 加 CP/Java），测试文件认 *.{spec,test}.[cm]?[jt]sx? 与 *Test.java（且须有 @Test 注解）；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。决策号两种形态（task-59）：\"DSD-NNNN\" = DSD-1474 起的新裁定（只解析 DSD 侧、不做台账查重，dsd 可省略由 id 推导、给了就必须同值），\"D-####\" = 历史台账号（台账自 D-1903 冻结后按 DSD 库核对）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
   "decisions": [
     {
@@ -451,6 +451,23 @@
           "title": "disclosureOnFreshRowNeverLogsThePasswordValue",
           "assert": "doesNotContain(DataSeeder.seededAdminPassword())",
           "note": "task-149 落地（CP 判据）。同族：disclosureOnReusedRowNeverLogsThePasswordValue（复用行同判）、disclosureMethodBodyNeverReferencesThePasswordConstant（源码级扫方法体，防另一条 env 分支被重加）、assertNoValueLogged:116（先断言 appender 非空，否则「不含」是空断言）；解析优先级 10 例（osEnvWinsOverPropertyAndRandom 等）。UI 面「披露面板只渲染一次 / 刷新后不再含明文」的断言仍缺（task-149 收尾），所以本条款只判 CP 侧"
+        }
+      ]
+    },
+    {
+      "id": "D-1926",
+      "rev": 1,
+      "dsd": 1455,
+      "title": "预设降级为只读模板：assigned 行承载原子，preset 退出求值面（task-933 / R39）",
+      "clauses": [
+        {
+          "id": "D-1926/1",
+          "text": "预设 = 只读模板：导入写 source=assigned 并记 originPresetId（展示/对比/重新对齐用，不参与求值）；PRESET 退出 EVALUATION_SOURCES/WRITABLE_SOURCES/DB CHECK，仅保留为 provenance 历史值",
+          "status": "covered",
+          "file": "A03-xihe/packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/policy/PresetGrantMaterializerTest.java",
+          "title": "onlyTheAssignedSourceIsRead",
+          "assert": "verify(grantRepository).findBySubjectTypeAndSubjectIdAndSource(SUBJECT_USER, SUBJECT, \"assigned\");",
+          "note": "task-933 落地；DSD id 1455（external_id D-1926）。反证：该用例同时断言 never preset / never agent_default。注意 D-1926 在 lead-decisions-ledger-2.md 的 2026-11-23 条目同号（回执门），号段由 Lead 处理；本条按代码与 task-933 卡面的引用登记 R39 语义"
         }
       ]
     }
