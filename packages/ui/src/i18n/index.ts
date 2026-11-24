@@ -2057,6 +2057,8 @@ const messages = {
             toolDiagnosticsSummary: "共 {total} 条，已回灌前 {shown} 条",
             toolDiagnosticsMore: "另有 {count} 条",
             toolRawOutput: "原文",
+            runRecoveryDismiss: "知道了",
+            emptyGreeting: "你好，我是 xihe Agent。有什么我可以帮你的？",
             /* PLAN-0688：专属工具卡（command / patch / read）的可见文案。 */
             toolCard: {
                 exitCode: "退出码",
@@ -4270,7 +4272,7 @@ const messages = {
             details: "详情",
             title: "配置「{name}」",
             titleReadonly: "主体「{name}」",
-            desc: "人设创建时钉住；模型、委派预算、记忆与钩子可按分区保存，保存后立即对后续新会话生效。",
+            desc: "人设、模型、委派预算、记忆与钩子可按分区保存；人设改动在下一次运行生效，在途运行保持原人设。",
             sectionIdentity: "身份",
             fieldName: "名称",
             fieldCreatedAt: "创建于",
@@ -4280,6 +4282,11 @@ const messages = {
             sectionPersona: "人设",
             personaFallback: "未选择模板（基线人设）",
             personaFrozenNote: "模板在创建时钉住，创建后不可更换；修改模板不会回溯已创建的主体。",
+            personaEditHint:
+                "人设可改；保存后对下一次运行生效，在途运行保持原人设。留空 = 清空人设。",
+            personaPlaceholder: "输入智能体人设（系统提示词）…",
+            personaTooLong: "人设最多 {max} 个字符。",
+            personaSaved: "人设已保存",
             sectionModel: "模型",
             modelProvider: "默认 Provider",
             modelName: "默认模型",
@@ -6599,6 +6606,8 @@ const messages = {
             toolDiagnosticsSummary: "{total} total, first {shown} fed back",
             toolDiagnosticsMore: "{count} more",
             toolRawOutput: "Raw output",
+            runRecoveryDismiss: "Got it",
+            emptyGreeting: "Hi, I'm xihe Agent. What can I help you with?",
             /* PLAN-0688: visible copy for the dedicated command/patch/read cards. */
             toolCard: {
                 exitCode: "Exit code",
@@ -8894,7 +8903,7 @@ const messages = {
             details: "Details",
             title: 'Configure "{name}"',
             titleReadonly: 'Principal "{name}"',
-            desc: "The persona is pinned at creation; model, delegation budget, memory and hooks save per section and take effect for subsequent new sessions.",
+            desc: "Persona, model, delegation budget, memory and hooks save per section; a persona change takes effect on the next run while in-flight runs keep their prompt.",
             sectionIdentity: "Identity",
             fieldName: "Name",
             fieldCreatedAt: "Created",
@@ -8905,6 +8914,11 @@ const messages = {
             personaFallback: "No template (baseline persona)",
             personaFrozenNote:
                 "The template is pinned at creation and cannot be changed afterwards; editing a template does not retroactively affect existing principals.",
+            personaEditHint:
+                "The persona is editable; a save applies to the next run, in-flight runs keep their prompt. Empty = clear it.",
+            personaPlaceholder: "Enter the agent persona (system prompt)…",
+            personaTooLong: "The persona may be at most {max} characters.",
+            personaSaved: "Persona saved",
             sectionModel: "Model",
             modelProvider: "Default provider",
             modelName: "Default model",

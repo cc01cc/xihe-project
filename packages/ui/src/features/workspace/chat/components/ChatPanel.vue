@@ -1793,7 +1793,7 @@ watch(
                 data-testid="run-recovery-dismiss"
                 @click="chatStore.dismissRunRecovery(props.sessionId)"
             >
-                知道了
+                {{ t("chat.runRecoveryDismiss") }}
             </button>
         </div>
 
@@ -1914,7 +1914,7 @@ watch(
         >
             <div class="text-2xl font-semibold text-muted-foreground">xihe</div>
             <p class="text-sm text-muted-foreground text-center max-w-md">
-                你好，我是 xihe Agent。有什么我可以帮你的？
+                {{ t("chat.emptyGreeting") }}
             </p>
             <div class="flex flex-wrap gap-2 justify-center max-w-md">
                 <button

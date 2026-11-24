@@ -20,6 +20,18 @@ public final class ContextEventPayloadSafety {
     public static final String CREDENTIAL_RESULT_PLACEHOLDER =
             "<credential value delivered in-memory; single-use lease, five minute TTL>";
 
+    /**
+     * task-988: the Agent marks an intentional, redacted, bounded presentation projection with this
+     * field. Only a marked object may replace the legacy placeholder — arbitrary legacy strings and
+     * unmarked objects stay withheld, so old records never suddenly surface a body and no tool can
+     * smuggle raw output past the durable sanitizer.
+     */
+    public static final String TOOL_RESULT_PRESENTATION_MARKER = "xiheToolResultPresentation";
+    public static final int TOOL_RESULT_PRESENTATION_VERSION = 1;
+    public static final int TOOL_RESULT_PREVIEW_CHARS = 4096;
+    private static final String TOOL_RESULT_TRUNCATION_TEMPLATE =
+            "\n[truncated: first %d of %d chars]";
+
     /** PLAN-0628 M2b: the CP-owned tool whose result carries a skill body. */
     public static final String SKILL_READ_TOOL = "skill_read";
 
@@ -95,9 +107,64 @@ public final class ContextEventPayloadSafety {
             safe.set("result", skillBodyMetadata(skillBodyDigest(source.get("result")), mapper));
             return safe;
         }
-        safe.put("result", "acquire_credential".equals(name)
-                ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER);
+        if ("acquire_credential".equals(name)) {
+            safe.put("result", CREDENTIAL_RESULT_PLACEHOLDER);
+            return safe;
+        }
+        safe.set("result", presentation(source.get("result"), mapper));
         return safe;
+    }
+
+    /**
+     * task-988: keep an Agent-marked presentation projection, bound it again on this side, and
+     * leave every other shape at the legacy placeholder.
+     */
+    private static JsonNode presentation(JsonNode raw, ObjectMapper mapper) {
+        if (raw == null
+                || !raw.isObject()
+                || raw.path(TOOL_RESULT_PRESENTATION_MARKER).asInt(-1) != TOOL_RESULT_PRESENTATION_VERSION) {
+            return mapper.getNodeFactory().textNode(UNSAFE_TOOL_RESULT_PLACEHOLDER);
+        }
+        JsonNode previewNode = raw.get("preview");
+        if (previewNode == null || !previewNode.isTextual()) {
+            return mapper.getNodeFactory().textNode(UNSAFE_TOOL_RESULT_PLACEHOLDER);
+        }
+        String preview = previewNode.asText();
+        boolean truncated = raw.path("truncated").asBoolean(false)
+                || preview.length() > TOOL_RESULT_PREVIEW_CHARS;
+        if (preview.length() > TOOL_RESULT_PREVIEW_CHARS) {
+            preview = boundPreview(preview);
+            truncated = true;
+        }
+        ObjectNode projected = mapper.createObjectNode();
+        projected.put(TOOL_RESULT_PRESENTATION_MARKER, TOOL_RESULT_PRESENTATION_VERSION);
+        projected.put("preview", preview);
+        projected.put("truncated", truncated);
+        JsonNode size = raw.get("sizeBytes");
+        if (size != null && size.canConvertToLong() && size.asLong() >= 0) {
+            projected.put("sizeBytes", size.asLong());
+        }
+        return projected;
+    }
+
+    private static String boundPreview(String text) {
+        int total = text.length();
+        int shown = total;
+        for (int attempt = 0; attempt < 8; attempt++) {
+            String marker = String.format(TOOL_RESULT_TRUNCATION_TEMPLATE, shown, total);
+            int next = Math.max(0, TOOL_RESULT_PREVIEW_CHARS - marker.length());
+            if (next == shown) {
+                break;
+            }
+            shown = next;
+        }
+        String marker = String.format(TOOL_RESULT_TRUNCATION_TEMPLATE, shown, total);
+        int cut = Math.min(Math.max(0, TOOL_RESULT_PREVIEW_CHARS - marker.length()), text.length());
+        // Never cut a surrogate pair in half: the half pair is not a preview of anything.
+        if (cut > 0 && cut < text.length() && Character.isLowSurrogate(text.charAt(cut)) && Character.isHighSurrogate(text.charAt(cut - 1))) {
+            cut--;
+        }
+        return text.substring(0, cut) + marker;
     }
 
     /**

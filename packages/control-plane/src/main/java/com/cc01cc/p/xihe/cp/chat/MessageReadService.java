@@ -410,8 +410,31 @@ public class MessageReadService {
             if (!calls.isArray() || calls.isEmpty()) {
                 return;
             }
-            dto.put("toolCalls", objectMapper.convertValue(
-                    calls, new TypeReference<List<Map<String, Object>>>() { }));
+            List<Map<String, Object>> projected = objectMapper.convertValue(
+                    calls, new TypeReference<List<Map<String, Object>>>() { });
+            // task-988: the durable snapshot stores the bounded preview as text, so the truncation
+            // fact travels as an explicit marker. Expose it as a flag instead of making every
+            // client re-parse a marker, and normalize the older CP JSON marker into readable text.
+            for (Map<String, Object> call : projected) {
+                Object result = call.get("result");
+                if (!(result instanceof String text) || text.isBlank()) {
+                    continue;
+                }
+                if (text.startsWith("{\"__xihe_truncated__\"")) {
+                    Map<String, Object> legacy = readTruncationMarker(text);
+                    if (legacy != null) {
+                        call.put("result", legacy.get("result"));
+                        call.put("resultTruncated", true);
+                        call.put("resultBytes", legacy.get("chars"));
+                        continue;
+                    }
+                }
+                if (text.contains("[truncated: first ")
+                        || text.contains("[output truncated: first ")) {
+                    call.put("resultTruncated", true);
+                }
+            }
+            dto.put("toolCalls", projected);
             if (snapshot.path("truncated").asBoolean(false)) {
                 dto.put("toolCallsTruncated", true);
                 dto.put("toolCallsTotal", snapshot.path("total").asInt(calls.size()));
@@ -419,6 +442,30 @@ public class MessageReadService {
         } catch (com.fasterxml.jackson.core.JsonProcessingException | IllegalArgumentException e) {
             logger.warn("[LIFECYCLE] service=cp event=tool_calls_projection_failed messageId={} errorType={}",
                     message.getId(), e.getClass().getSimpleName(), e);
+        }
+    }
+
+    /**
+     * task-988: rebuild a readable preview from the legacy CP bound marker
+     * ({@code {"__xihe_truncated__":true,"__chars__":N,"__prefix__":"..."}}). Returns {@code null}
+     * for anything that does not parse, so the caller keeps the original text untouched.
+     */
+    private Map<String, Object> readTruncationMarker(String text) {
+        try {
+            var node = objectMapper.readTree(text);
+            if (!node.path("__xihe_truncated__").asBoolean(false)) {
+                return null;
+            }
+            int chars = node.path("__chars__").asInt(0);
+            String prefix = node.path("__prefix__").asText("");
+            String normalized = prefix + "\n[truncated: first " + prefix.length()
+                    + " of " + chars + " chars]";
+            Map<String, Object> parsed = new LinkedHashMap<>();
+            parsed.put("result", normalized);
+            parsed.put("chars", chars);
+            return parsed;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException | RuntimeException e) {
+            return null;
         }
     }
 

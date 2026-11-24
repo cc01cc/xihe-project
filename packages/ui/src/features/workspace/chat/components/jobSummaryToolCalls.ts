@@ -35,6 +35,10 @@ export interface HistoryToolCall {
     startedAt?: string;
     completedAt?: string;
     result?: string;
+    /** task-988: bounded projection was truncated (durable snapshot flag). */
+    resultTruncated?: boolean;
+    /** task-988: full UTF-8 byte size before truncation. */
+    resultBytes?: number;
     truncated?: boolean;
     /**
      * PLAN-0649: CP refusal code persisted in the V83 snapshot. Refusals are judged

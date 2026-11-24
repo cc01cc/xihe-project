@@ -580,6 +580,14 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                                 status,
                                 completedAt: new Date().toISOString(),
                                 ...(typeof result === "string" ? { result } : {}),
+                                ...(data.resultTruncated === true
+                                    ? {
+                                          resultTruncated: true,
+                                          ...(typeof data.resultBytes === "number"
+                                              ? { resultBytes: data.resultBytes }
+                                              : {}),
+                                      }
+                                    : {}),
                                 ...(diagnostics ? { diagnostics } : {}),
                                 ...(refusalCode ? { refusalCode } : {}),
                                 ...(typeof data.tool === "string" ? { name: data.tool } : {}),

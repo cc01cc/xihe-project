@@ -200,6 +200,24 @@ describe("ToolCallCard", () => {
         expect(wrapper.text()).toContain("truncated");
     });
 
+    it("marks a durable projection truncated even when the preview is short (task-988)", async () => {
+        // The Agent bounded the body at the durable/projection layer; the card must not
+        // rely on its own 2000-char heuristic to tell the user the result was cut.
+        const wrapper = mountCard({
+            toolCall: makeToolCall({
+                status: "completed",
+                result: "head\n[truncated: first 3800 of 9000 chars]",
+                resultTruncated: true,
+                resultBytes: 120_000,
+            }),
+        });
+        await wrapper.find("button").trigger("click");
+
+        expect(wrapper.find('[data-testid="tool-result-truncated"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain("truncated");
+        expect(wrapper.text()).toContain("120000");
+    });
+
     it("keeps the legacy collapsed card when there are no diagnostics", () => {
         const wrapper = mountCard({
             toolCall: makeToolCall({ status: "completed", result: "done" }),

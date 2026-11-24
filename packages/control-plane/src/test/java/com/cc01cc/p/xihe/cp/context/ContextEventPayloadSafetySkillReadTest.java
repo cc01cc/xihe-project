@@ -109,8 +109,8 @@ class ContextEventPayloadSafetySkillReadTest {
     }
 
     @Test
-    void everyOtherToolStillGetsTheExistingPlaceholder() throws Exception {
-        // Regression guard: the new branch must not widen any other tool's durable result.
+    void unmarkedLegacyBodyIsStillWithheld() {
+        // Fail-closed: an arbitrary legacy string is not a projection, so it keeps the placeholder.
         ObjectNode payload = MAPPER.createObjectNode();
         payload.put("toolName", "read_file");
         payload.put("toolCallId", "call-2");
@@ -120,6 +120,54 @@ class ContextEventPayloadSafetySkillReadTest {
 
         assertEquals(ContextEventPayloadSafety.UNSAFE_TOOL_RESULT_PLACEHOLDER,
                 safe.path("result").asText());
+        assertFalse(safe.toString().contains("must not persist"));
+    }
+
+    @Test
+    void markedPresentationProjectionSurvivesAndIsRebounded() {
+        ObjectNode result = MAPPER.createObjectNode();
+        result.put(ContextEventPayloadSafety.TOOL_RESULT_PRESENTATION_MARKER,
+                ContextEventPayloadSafety.TOOL_RESULT_PRESENTATION_VERSION);
+        String preview = "line\n[truncated: first 3800 of 9000 chars]";
+        result.put("preview", preview);
+        result.put("truncated", true);
+        result.put("sizeBytes", 120_000);
+
+        ObjectNode payload = MAPPER.createObjectNode();
+        payload.put("toolName", "read_file");
+        payload.put("toolCallId", "call-3");
+        payload.set("result", result);
+
+        JsonNode safe = ContextEventPayloadSafety.sanitize("tool.result", payload, MAPPER);
+
+        assertEquals(ContextEventPayloadSafety.TOOL_RESULT_PRESENTATION_VERSION,
+                safe.path("result").path(ContextEventPayloadSafety.TOOL_RESULT_PRESENTATION_MARKER).asInt());
+        assertEquals(preview, safe.path("result").path("preview").asText());
+        assertTrue(safe.path("result").path("truncated").asBoolean());
+        assertEquals(120_000, safe.path("result").path("sizeBytes").asInt());
+    }
+
+    @Test
+    void oversizedMarkedPreviewIsCutAgainOnTheCpSide() {
+        ObjectNode result = MAPPER.createObjectNode();
+        result.put(ContextEventPayloadSafety.TOOL_RESULT_PRESENTATION_MARKER,
+                ContextEventPayloadSafety.TOOL_RESULT_PRESENTATION_VERSION);
+        String body = "z".repeat(ContextEventPayloadSafety.TOOL_RESULT_PREVIEW_CHARS + 2_000);
+        result.put("preview", body);
+        result.put("truncated", false);
+
+        ObjectNode payload = MAPPER.createObjectNode();
+        payload.put("toolName", "read_file");
+        payload.put("toolCallId", "call-4");
+        payload.set("result", result);
+
+        JsonNode safe = ContextEventPayloadSafety.sanitize("tool.result", payload, MAPPER);
+
+        assertTrue(safe.path("result").path("truncated").asBoolean());
+        String preview = safe.path("result").path("preview").asText();
+        assertTrue(preview.length() <= ContextEventPayloadSafety.TOOL_RESULT_PREVIEW_CHARS);
+        assertTrue(preview.contains("[truncated: first "));
+        assertFalse(preview.contains("z".repeat(ContextEventPayloadSafety.TOOL_RESULT_PREVIEW_CHARS + 1)));
     }
 
     private static String sha256Hex(String value) throws Exception {

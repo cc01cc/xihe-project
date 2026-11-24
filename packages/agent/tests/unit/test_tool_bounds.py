@@ -19,7 +19,7 @@ from xihe_agent.agent_runner.tool_adapter import (
 )
 from xihe_agent.context.diagnostics import extract_command_result
 from xihe_agent.interfaces.context import AgentContext
-from xihe_agent.interfaces.tool import UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER, ToolSpec
+from xihe_agent.interfaces.tool import TOOL_RESULT_PRESENTATION_MARKER, ToolSpec
 
 STDOUT_FIELD = tool_adapter_module.COMMAND_STDOUT_PREVIEW_CHARS
 STDERR_FIELD = tool_adapter_module.COMMAND_STDERR_PREVIEW_CHARS
@@ -293,9 +293,11 @@ async def test_arun_event_and_model_body_only_carry_bounded_preview(monkeypatch)
     result_event = next(event for event in events if event.type == "tool.result")
     result = result_event.payload["result"]
     assert isinstance(result, dict)
-    # PLAN-0510 决策 #6：未登记 checkpoint-safe 输出 schema 的 `build` 命令工具 → durable
-    # tool.result 只落占位符（模型 body 仍带真实有界 preview，见下方断言）。
-    assert result == {"preview": UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER, "truncated": False}
+    # task-988：durable tool.result 落「显式标记 + 有界投影」，不再落通用占位符；
+    # 模型 body 仍带真实有界 preview（见下方断言）。原始大输出不得整段落库。
+    assert result[TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert result["truncated"] is True
+    assert "[truncated: first " in result["preview"]
     assert "x" * 5000 not in json.dumps(result)
 
     # 模型 body：预览有界 + 关键元数据（exit/artifact 引用）仍可见。
@@ -319,9 +321,11 @@ async def test_arun_legacy_gate_writes_bounded_string_result(monkeypatch):
     events = [call.args[0] for call in event_store.append.await_args_list]
     result_event = next(event for event in events if event.type == "tool.result")
     stored = result_event.payload["result"]
-    assert isinstance(stored, str), "gate OFF 必须保持 legacy 字符串形状"
-    assert stored == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
-    assert "x" * 5000 not in stored
+    # task-988：presentation 投影与其他 payload 字段无关，gate OFF 也是同一个显式标记对象。
+    assert isinstance(stored, dict)
+    assert stored[TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert stored["truncated"] is True
+    assert "x" * 5000 not in json.dumps(stored)
 
 
 def test_gate_on_result_object_round_trips_through_reader(monkeypatch):

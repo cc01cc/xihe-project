@@ -1115,6 +1115,8 @@ export interface AgentPrincipalUpdateBody {
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
     allowedModels?: AgentModelRef[] | null;
+    /** task-974 / R35: the persona; absent keeps it, null clears it. */
+    systemPrompt?: string | null;
 }
 
 /**
@@ -1129,6 +1131,7 @@ export interface AgentPrincipalUpdateView {
     hooks: Record<string, unknown> | null;
     contextPolicy: Record<string, unknown> | null;
     delegationPolicy: Record<string, unknown> | null;
+    systemPrompt: string | null;
 }
 
 /** fail-closed：`{provider,model}` 两半都齐全的条目才保留；非数组/畸形一律 null。 */

@@ -11,9 +11,10 @@ from xihe_agent.interfaces.tool import (
     CREDENTIAL_DELIVERED_PLACEHOLDER,
     TOOL_RESULT_REFUSAL_CODE_KEY,
     TOOL_RESULT_STATUS_KEY,
-    UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
     normalize_tool_refusal_code,
     normalize_tool_result_status,
+    project_tool_result_for_presentation,
+    unwrap_checkpoint_safe_tool_output,
 )
 
 FINAL_CHAIN_NAME = "LangGraph"
@@ -142,13 +143,6 @@ class LangGraphEventAdapter(EventAdapter):
             # implies "completed".
             tool_metadata: dict[str, Any] = {}
             if isinstance(tool_output, ToolMessage):
-                # Tool results remain available to the current graph/model but
-                # never cross the public presentation boundary as raw text.
-                formatted = (
-                    CREDENTIAL_DELIVERED_PLACEHOLDER
-                    if name == ACQUIRE_CREDENTIAL_TOOL_NAME
-                    else UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
-                )
                 # Provider ToolMessage IDs only pair LangGraph messages; CP
                 # MCP headers use the callback lifecycle run ID.
                 tool_call_id = run_id or tool_output.tool_call_id
@@ -162,13 +156,32 @@ class LangGraphEventAdapter(EventAdapter):
                         tool_metadata["status"] = status
                     if refusal_code is not None:
                         tool_metadata["refusalCode"] = refusal_code
+                    body = tool_output.content
+                else:
+                    body = tool_output.content
             else:
-                formatted = (
-                    CREDENTIAL_DELIVERED_PLACEHOLDER
-                    if name == ACQUIRE_CREDENTIAL_TOOL_NAME
-                    else UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
-                )
                 tool_call_id = run_id
+                body = tool_output
+
+            # task-988: the model-wire payload is wrapped in the untrusted-data
+            # envelope (and may carry a model-only tail). Neither belongs on the
+            # presentation surface, so present the envelope body when there is one.
+            unwrapped = unwrap_checkpoint_safe_tool_output(body)
+            if unwrapped is not None:
+                body = unwrapped
+
+            # task-988: the public presentation surface carries a bounded, redacted
+            # preview. The raw value never rides the SSE frame, and credentials keep
+            # their fixed placeholder (their value lives only in the Run's memory).
+            presentation: dict[str, Any] = {}
+            if name == ACQUIRE_CREDENTIAL_TOOL_NAME:
+                formatted = CREDENTIAL_DELIVERED_PLACEHOLDER
+            else:
+                projected = project_tool_result_for_presentation(body)
+                formatted = projected["preview"]
+                if projected["truncated"]:
+                    presentation["resultTruncated"] = True
+                    presentation["resultBytes"] = projected["sizeBytes"]
             tool_event_data: dict[str, Any] = {
                 "tool": name,
                 "result": formatted,
@@ -177,6 +190,7 @@ class LangGraphEventAdapter(EventAdapter):
                 "toolCallId": tool_call_id,
                 "origin": self._origin(name),
                 **tool_metadata,
+                **presentation,
             }
             return AgentEvent(type="tool_result", data=tool_event_data)
 

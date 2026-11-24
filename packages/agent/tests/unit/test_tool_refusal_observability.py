@@ -21,9 +21,9 @@ from xihe_agent.agent_runner import tool_adapter as tool_adapter_module
 from xihe_agent.agent_runner.tool_adapter import LCToolAdapter
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.tool import (
+    TOOL_RESULT_PRESENTATION_MARKER,
     TOOL_RESULT_REFUSAL_CODE_KEY,
     TOOL_RESULT_STATUS_KEY,
-    UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
     ToolSpec,
     normalize_tool_refusal_code,
     normalize_tool_result_status,
@@ -123,8 +123,9 @@ async def test_refusal_metadata_reaches_durable_payload_and_message(monkeypatch)
     content, artifact = await adapter._arun(prompt="child", tool_call_id="call-9")
 
     _, result_payload = _payloads(event_store)
-    # I1: the body channel is byte-identical to today (the fixed placeholder).
-    assert result_payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    # task-988：durable 走有界投影；refusal 码仍是独立的形状校验通道。
+    assert result_payload["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert f"Tool error: {REFUSAL_CODE}" in result_payload["result"]["preview"]
     assert result_payload["status"] == "failed"
     assert result_payload["refusalCode"] == REFUSAL_CODE
     assert artifact is None
@@ -186,7 +187,8 @@ async def test_successful_call_keeps_legacy_return_shape(monkeypatch):
     content, _ = await adapter._arun(prompt="child", tool_call_id="call-9")
 
     _, result_payload = _payloads(event_store)
-    assert result_payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    assert result_payload["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert result_payload["result"]["preview"] == "child session created"
     assert "status" not in result_payload  # legacy gate OFF: completed stays unwritten
     assert "refusalCode" not in result_payload
     assert isinstance(content, str)
@@ -205,10 +207,9 @@ async def test_v2_gate_carries_refusal_code(monkeypatch):
     assert result_payload["schemaVersion"] == 2
     assert result_payload["status"] == "failed"
     assert result_payload["refusalCode"] == REFUSAL_CODE
-    assert result_payload["result"] == {
-        "preview": UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
-        "truncated": False,
-    }
+    assert result_payload["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert f"Tool error: {REFUSAL_CODE}" in result_payload["result"]["preview"]
+    assert result_payload["result"]["truncated"] is False
 
 
 @pytest.mark.asyncio
@@ -259,7 +260,7 @@ def test_sse_tool_result_publishes_status_and_refusal_code():
 
     data = _translate_tool_end(output)
 
-    assert data["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    assert data["result"] == "whatever the tool produced"
     assert data["status"] == "failed"
     assert data["refusalCode"] == REFUSAL_CODE
     assert json.dumps(data).count(REFUSAL_CODE) == 1  # code appears only as the code
@@ -270,7 +271,7 @@ def test_sse_tool_result_without_metadata_keeps_legacy_payload_shape():
 
     data = _translate_tool_end(output, name="read_file")
 
-    assert data["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    assert data["result"] == "body"
     assert "status" not in data
     assert "refusalCode" not in data
 
@@ -301,6 +302,6 @@ def test_sse_tool_result_drops_malformed_metadata(metadata):
 def test_sse_string_output_carries_no_metadata():
     data = _translate_tool_end("plain tool string output")
 
-    assert data["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    assert data["result"] == "plain tool string output"
     assert "status" not in data
     assert "refusalCode" not in data

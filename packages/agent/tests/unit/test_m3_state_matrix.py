@@ -21,7 +21,7 @@ from xihe_agent.context.crash_recovery import CrashRecovery
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import TextMessage, ToolCallRef
-from xihe_agent.interfaces.tool import UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER, ToolSpec
+from xihe_agent.interfaces.tool import TOOL_RESULT_PRESENTATION_MARKER, ToolSpec
 
 
 def _spec(name: str = "execute_command") -> ToolSpec:
@@ -114,9 +114,9 @@ async def test_same_round_success_keeps_legacy_shape_and_defaults_to_completed(
     assert [e.type for e in events] == ["tool.called", "tool.result"]
     # m3-contract §1.1：gate OFF completed 保持 pre-gate 字段集（无 status 键）。
     assert "status" not in events[1].payload
-    # PLAN-0510 决策 #6：未登记 checkpoint-safe 输出 schema 的工具，durable
-    # tool.result 只落固定通用占位符（当前 Run 仍用内存结果）。
-    assert events[1].payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    # task-988：durable tool.result 落显式标记的有界投影，模型投影仍走占位符。
+    assert events[1].payload["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert events[1].payload["result"]["preview"] == "file content"
 
     ctx = AgentContext.from_events("s1", events)
     assert ctx.messages[1].status == "completed"  # reader 缺省
@@ -145,8 +145,9 @@ async def test_failed_tool_closes_pair_with_explicit_failed_status(
     assert [e.type for e in events] == ["tool.called", "tool.result"]
     result = events[1].payload
     assert result["status"] == "failed", "gate OFF 非 completed 必须显式写 status"
-    # PLAN-0510 决策 #6：失败结果在 durable 只落固定占位符（工具数据不外泄）。
-    assert result["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    # task-988：失败也落有界投影，但异常原文仍不外泄（只用固定错误文案）。
+    assert result["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert result["result"]["preview"] == "Tool execution failed"
     assert list(result)[:4] == ["call_id", "tool_name", "result", "status"]
 
     # 失败状态贯穿：事件 → 上下文 → provider 映射
@@ -155,7 +156,9 @@ async def test_failed_tool_closes_pair_with_explicit_failed_status(
     mapped = langgraph_runner_module.to_langchain_messages(ctx.messages)
     assert isinstance(mapped[1], ToolMessage)
     assert mapped[1].status == "error"
-    assert UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER in str(mapped[1].content)
+    # task-988：事件重建出的内容是有界投影；provider 入口另有 history_safety 掩码
+    # （见 test_cross_run_tool_output_safety），模型不会看到投影正文。
+    assert "Tool execution failed" in str(mapped[1].content)
     _assert_no_unanswered_calls(mapped)
 
 
@@ -172,8 +175,9 @@ async def test_failed_tool_with_gate_on_writes_v2_status(
     assert result["schemaVersion"] == 2
     assert result["status"] == "failed"
     assert isinstance(result["result"], dict)
-    # PLAN-0510 决策 #6：失败结果同样只落占位符（不泄露工具数据）。
-    assert result["result"]["preview"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    # task-988：失败结果同样落有界投影（固定错误文案，不泄露工具数据）。
+    assert result["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert result["result"]["preview"] == "Tool execution failed"
     assert result["result"]["truncated"] is False
 
 

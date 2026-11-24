@@ -1,14 +1,5 @@
 {
     "version": 1,
     "note": "task-763 template hardcoded-copy baseline: file:line@text-hash; every row needs reason + owner-task",
-    "entries": {
-        "src/features/workspace/chat/components/ChatPanel.vue:1745@de32e20193": {
-            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
-            "owner-task": "task-763"
-        },
-        "src/features/workspace/chat/components/ChatPanel.vue:1819@2e201f3580": {
-            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
-            "owner-task": "task-763"
-        }
-    }
+    "entries": {}
 }

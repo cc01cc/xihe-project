@@ -4,7 +4,11 @@ import json
 
 from xihe_agent.agent_runner.tool_adapter import LCToolAdapter, _build_args_schema
 from xihe_agent.interfaces.context import AgentContext
-from xihe_agent.interfaces.tool import CheckpointSafeToolSchema, ToolSpec
+from xihe_agent.interfaces.tool import (
+    TOOL_RESULT_PRESENTATION_MARKER,
+    CheckpointSafeToolSchema,
+    ToolSpec,
+)
 
 
 def _run_immediate(awaitable):
@@ -123,7 +127,7 @@ def test_checkpoint_safe_tool_emits_canonical_projected_json() -> None:
     )
 
 
-def test_unmarked_tool_persists_only_generic_placeholder() -> None:
+def test_unmarked_tool_persists_bounded_presentation_projection() -> None:
     result_canary = "unmarked-result-canary"
     diagnostic_canary = "unmarked-diagnostic-canary"
     artifact_canary = "unmarked-artifact-canary"
@@ -145,28 +149,21 @@ def test_unmarked_tool_persists_only_generic_placeholder() -> None:
 
     output, _artifact = _run_immediate(adapter._arun())
 
-    # The current Run still receives its result; only cross-Run durable history
-    # is restricted to the frozen generic placeholder.
+    # The current Run still receives its result; the durable tool.result carries
+    # task-988's explicitly-marked, bounded presentation projection — never the
+    # raw model-wire envelope and never an unbounded body.
     assert result_canary in output
     assert diagnostic_canary in output
     result_events = [event for event in event_store.events if event.type == "tool.result"]
     assert len(result_events) == 1
     payload = result_events[0].payload
     serialized = json.dumps(payload, sort_keys=True)
-    assert result_canary not in serialized
-    assert diagnostic_canary not in serialized
-    assert artifact_canary not in serialized
     assert "diagnostics" not in payload
+    assert "untrusted-tool-output" not in serialized
+    assert payload["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert result_canary in payload["result"]["preview"]
+    assert artifact_canary in payload["result"]["preview"]
     assert context.latest_sequence == 2
-    if isinstance(payload.get("result"), dict):
-        assert payload["result"].get("preview") == (
-            "Tool result withheld from durable history because no checkpoint-safe output schema is registered."
-        )
-        assert "artifactRef" not in payload["result"]
-    else:
-        assert payload["result"] == (
-            "Tool result withheld from durable history because no checkpoint-safe output schema is registered."
-        )
 
 
 def test_originating_tool_call_id_is_injected_and_separate_from_run_call_id() -> None:

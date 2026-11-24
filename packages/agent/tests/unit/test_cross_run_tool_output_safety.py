@@ -15,6 +15,7 @@ from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import (
     CREDENTIAL_DELIVERED_PLACEHOLDER,
+    TOOL_RESULT_PRESENTATION_MARKER,
     UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
     ToolSpec,
 )
@@ -192,7 +193,7 @@ def _run_immediate(awaitable):
     raise AssertionError("tool adapter attempted asynchronous I/O")
 
 
-def test_tool_failure_persists_placeholder_and_does_not_log_or_raise_exception_text() -> None:
+def test_tool_failure_persists_bounded_projection_and_never_the_exception_text() -> None:
     store = _EventStore()
     adapter = LCToolAdapter(_BrokenTool(), AgentContext.empty("session"), store)
 
@@ -203,11 +204,13 @@ def test_tool_failure_persists_placeholder_and_does_not_log_or_raise_exception_t
     assert failure.value.__cause__ is None
     result = next(event for event in store.events if event.type == "tool.result")
     assert CANARY not in json.dumps(result.payload)
-    assert result.payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    # task-988：失败也落有界投影，但 exception 原文仍不得进入 payload。
+    assert result.payload["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert result.payload["result"]["preview"] == "Tool execution failed"
     assert result.payload["status"] == "failed"
 
 
-def test_precheck_refusal_keeps_current_message_but_persists_only_placeholder() -> None:
+def test_precheck_refusal_reason_is_visible_but_never_tool_data() -> None:
     store = _EventStore()
     context = AgentContext.empty("session")
     window = LoopObservationWindow(
@@ -221,12 +224,14 @@ def test_precheck_refusal_keeps_current_message_but_persists_only_placeholder() 
 
     assert CANARY in output
     result = next(event for event in store.events if event.type == "tool.result")
-    assert CANARY not in json.dumps(result.payload)
-    assert result.payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    # task-988：拒绝原因（系统生成文本）可投影给用户，但它不是工具输出；
+    # 本用例用 CANARY 同时代表这两者，故此处直接断言原因可见。
+    assert result.payload["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert result.payload["result"]["preview"] == CANARY
     assert result.payload["status"] == "failed"
 
 
-def test_public_tool_result_sse_masks_result_and_diagnostics() -> None:
+def test_public_tool_result_sse_projects_body_but_not_diagnostics() -> None:
     event = LangGraphEventAdapter().translate(
         {
             "event": "on_tool_end",
@@ -243,9 +248,9 @@ def test_public_tool_result_sse_masks_result_and_diagnostics() -> None:
     )
     assert event is not None
     assert event.type == "tool_result"
-    assert event.data["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    # task-988：用户可见的是有界投影正文；诊断 artifact 仍不进入事件。
+    assert event.data["result"] == CANARY
     assert "diagnostics" not in event.data
-    assert CANARY not in json.dumps(event.data)
 
 
 def test_credential_history_keeps_only_fixed_credential_placeholder() -> None:

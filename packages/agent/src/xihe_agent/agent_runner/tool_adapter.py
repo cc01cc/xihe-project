@@ -53,10 +53,10 @@ from xihe_agent.interfaces.tool import (
     CREDENTIAL_HANDOFF_REQUIRED_KEY,
     TOOL_RESULT_REFUSAL_CODE_KEY,
     TOOL_RESULT_STATUS_KEY,
-    UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
     BaseAgentTool,
     ToolSpec,
     normalize_tool_refusal_code,
+    project_tool_result_for_presentation,
     strict_json_loads,
 )
 
@@ -581,12 +581,9 @@ class LCToolAdapter(BaseTool):
                         self._context.metadata[NO_PROGRESS_SIGNAL_KEY] = pre.signal
                     await self._append_tool_result(
                         call_id,
-                        build_tool_event_result(
-                            CREDENTIAL_DELIVERED_PLACEHOLDER
-                            if credential_tool
-                            else UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
-                            {},
-                        ),
+                        CREDENTIAL_DELIVERED_PLACEHOLDER
+                        if credential_tool
+                        else project_tool_result_for_presentation(notice),
                         status="failed",
                     )
                     return wrap_untrusted_tool_output(notice), None
@@ -625,12 +622,9 @@ class LCToolAdapter(BaseTool):
                 try:
                     await self._append_tool_result(
                         call_id,
-                        build_tool_event_result(
-                            CREDENTIAL_DELIVERED_PLACEHOLDER
-                            if credential_tool
-                            else UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
-                            {},
-                        ),
+                        CREDENTIAL_DELIVERED_PLACEHOLDER
+                        if credential_tool
+                        else project_tool_result_for_presentation("Tool execution failed"),
                         status="failed",
                     )
                 except Exception:
@@ -688,10 +682,10 @@ class LCToolAdapter(BaseTool):
             safe_output_rejected_text = (
                 "Tool result withheld: checkpoint-safe output validation failed."
             )
-            unsafe_durable_placeholder = UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
             # Only versioned, allowlisted outputs may cross a Run boundary.
             # The current Run still receives the existing bounded result below,
-            # while EventStore stores a generic placeholder for unregistered tools.
+            # while the durable tool.result carries the bounded presentation
+            # projection described next.
             preview_source = (
                 safe_output_content
                 if safe_schema is not None and safe_output_content is not None
@@ -699,7 +693,7 @@ class LCToolAdapter(BaseTool):
                 if safe_output_rejected
                 else content
             )
-            preview, preview_meta = bound_tool_preview(
+            preview, _preview_meta = bound_tool_preview(
                 preview_source,
                 parsed if safe_schema is None else None,
             )
@@ -708,15 +702,17 @@ class LCToolAdapter(BaseTool):
             # history replay, UI projection and audit) carries only the fixed
             # placeholder, while the returned content below keeps the value for
             # the current model call.
+            #
+            # task-988: every other tool's durable result is an explicitly
+            # marked, redacted, bounded presentation object. CP accepts the
+            # marker only; legacy raw text stays withheld, so old records keep
+            # their placeholder instead of suddenly surfacing a body. The
+            # LangGraph checkpoint boundary is unchanged: the model wire payload
+            # below still uses `preview` and no raw object is checkpointed.
             if credential_tool:
                 durable_preview: Any = CREDENTIAL_DELIVERED_PLACEHOLDER
-                durable_meta: Any = {}
-            elif safe_schema is None:
-                durable_preview = unsafe_durable_placeholder
-                durable_meta = {}
             else:
-                durable_preview = preview
-                durable_meta = preview_meta
+                durable_preview = project_tool_result_for_presentation(preview_source)
             # PLAN-0342 P2-4 → PLAN-0381 T2.3：48k middle truncation 保留为命令
             # 分支兜底（对 ≤4096 的 preview 恒 no-op）；非命令载荷同样只出
             # 有界 preview——`read_file` 等超限内容不再整段进模型。
@@ -744,7 +740,7 @@ class LCToolAdapter(BaseTool):
 
             await self._append_tool_result(
                 call_id,
-                build_tool_event_result(durable_preview, durable_meta),
+                durable_preview,
                 diagnostics=diagnostics if credential_tool or safe_schema is not None else None,
                 # PLAN-0649 M1 (spec §1): a refusal is a tool-level outcome, not a
                 # Run failure (I4).

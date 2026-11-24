@@ -7,8 +7,11 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter, translate_events
 from xihe_agent.interfaces.tool import (
+    CHECKPOINT_SAFE_OUTPUT_PREFIX,
+    CHECKPOINT_SAFE_OUTPUT_SCHEMA_KEY,
+    CHECKPOINT_SAFE_OUTPUT_SUFFIX,
     CREDENTIAL_DELIVERED_PLACEHOLDER,
-    UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
+    TOOL_RESULT_PRESENTATION_LIMIT,
 )
 
 
@@ -101,7 +104,7 @@ async def test_translate_tool_end_with_tool_message():
     assert len(results) == 1
     payload = json.loads(results[0].removeprefix("event: tool_result\ndata: ").strip())
     assert payload["tool"] == "read_file"
-    assert payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    assert payload["result"] == "file content"
     assert payload["type"] == "tool_result"
     assert payload["run_id"] == "run-3"
     # Provider ToolMessage IDs remain internal to LangGraph correlation.
@@ -236,7 +239,7 @@ async def test_translate_tool_end_with_raw_output():
     assert len(results) == 1
     payload = json.loads(results[0].removeprefix("event: tool_result\ndata: ").strip())
     assert payload["tool"] == "list_dir"
-    assert payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    assert payload["result"] == "src\ntests\n"
 
 
 @pytest.mark.asyncio
@@ -459,7 +462,7 @@ async def test_tool_end_masks_result_and_diagnostics_artifact_from_event_data():
 
     assert len(results) == 1
     payload = _parse(results[0])
-    assert payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    assert payload["result"] == "raw output"
     assert payload["toolCallId"] == "run-20"
     assert "diagnostics" not in payload
 
@@ -566,7 +569,7 @@ async def test_acquire_credential_raw_output_streams_placeholder():
 
 
 @pytest.mark.asyncio
-async def test_other_tool_results_are_replaced_with_placeholder():
+async def test_other_tool_results_are_projected_into_the_stream():
     events = [
         {
             "event": "on_tool_end",
@@ -580,5 +583,78 @@ async def test_other_tool_results_are_replaced_with_placeholder():
         results.append(sse)
 
     assert len(results) == 1
-    assert UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER in results[0]
-    assert "plain file text" not in results[0]
+    payload = _parse(results[0])
+    assert payload["result"] == "plain file text"
+    assert "resultTruncated" not in payload
+
+
+@pytest.mark.asyncio
+async def test_oversized_tool_result_is_truncated_and_flagged():
+    body = "y" * (TOOL_RESULT_PRESENTATION_LIMIT + 5000)
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "data": {"output": ToolMessage(content=body, tool_call_id="c-big")},
+            "run_id": "run-big",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    payload = _parse(results[0])
+    assert payload["resultTruncated"] is True
+    assert payload["resultBytes"] == len(body.encode("utf-8"))
+    assert len(payload["result"]) <= TOOL_RESULT_PRESENTATION_LIMIT
+    assert "[truncated: first " in payload["result"]
+    assert "y" * 5000 not in payload["result"]
+
+
+@pytest.mark.asyncio
+async def test_credential_shaped_material_is_redacted_before_streaming():
+    api_key = "sk-live-1234567890abcdef"
+    bearer = "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature"
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "data": {"output": f"key={api_key}\nauth={bearer}\n"},
+            "run_id": "run-redact",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    assert api_key not in results[0]
+    assert "sk-[redacted]" in results[0]
+    assert bearer not in results[0]
+    assert "Bearer [redacted]" in results[0]
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_safe_envelope_is_unwrapped_for_presentation():
+    inner = '{"status":"ok"}'
+    wrapped = f"{CHECKPOINT_SAFE_OUTPUT_PREFIX}{inner}{CHECKPOINT_SAFE_OUTPUT_SUFFIX}"
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "checkpoint_safe_probe",
+            "data": {
+                "output": ToolMessage(
+                    content=wrapped,
+                    tool_call_id="c-safe",
+                    additional_kwargs={CHECKPOINT_SAFE_OUTPUT_SCHEMA_KEY: "probe.v1"},
+                )
+            },
+            "run_id": "run-safe",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    payload = _parse(results[0])
+    assert payload["result"] == inner
+    assert "untrusted-tool-output" not in payload["result"]

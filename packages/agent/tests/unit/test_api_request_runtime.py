@@ -803,10 +803,11 @@ async def test_real_runner_tool_loop_single_execution_and_native_suffix(type_id,
         assert len([event for event in events if event.type == "tool_call"]) == 1
         tool_results = [event for event in events if event.type == "tool_result"]
         assert len(tool_results) == 1
+        # task-988：presentation 面拿到有界投影正文（不是信封、不是占位符）。
+        assert tool_results[0].data["result"] == "tool-result"
+        assert "untrusted-tool-output" not in tool_results[0].data["result"]
         from xihe_agent.interfaces.tool import UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
 
-        assert tool_results[0].data["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
-        assert "tool-result" not in json.dumps(tool_results[0].data)
         # The active graph turn still gives the real volatile result to the provider.
         assert "tool-result" in json.dumps(captures[1][2][key])
         responded = [

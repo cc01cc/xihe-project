@@ -101,4 +101,39 @@ class MessageReadServiceVisibilityTest {
         assertTrue(!listed.get(1).containsKey("reasoning"),
                 "pre-V150 rows must omit reasoning instead of sending null");
     }
+
+    /**
+     * task-988: the durable snapshot stores a bounded preview string, so the read side exposes
+     * {@code resultTruncated} instead of forcing every client to sniff the marker, and normalizes
+     * the older CP JSON bound marker into the same readable text.
+     */
+    @Test
+    void tool_result_truncation_is_exposed_and_legacy_marker_is_normalized() {
+        Message current = message(MessageRole.ASSISTANT, "answer", Message.VISIBILITY_USER);
+        current.setToolCalls("""
+                {"version":1,"truncated":false,"total":2,"calls":[
+                  {"id":"c1","name":"read_file","arguments":"{}","status":"completed",
+                   "result":"head\\n[truncated: first 3800 of 9000 chars]","startedAt":"2026-11-24T00:00:00Z"},
+                  {"id":"c2","name":"execute_command","arguments":"{}","status":"completed",
+                   "result":"{\\"__xihe_truncated__\\":true,\\"__chars__\\":5000,\\"__prefix__\\":\\"head\\"}"}
+                ]}
+                """);
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
+                .thenReturn(List.of(current));
+
+        BranchPathService.BranchVisibility visibility =
+                new BranchPathService.BranchVisibility(BRANCH_ID, Map.of());
+
+        List<Map<String, Object>> listed =
+                service.listVisibleMessages(SESSION_ID, WORKSPACE_ID, BRANCH_ID, visibility);
+
+        assertEquals(1, listed.size());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> calls = (List<Map<String, Object>>) listed.get(0).get("toolCalls");
+        assertEquals(2, calls.size());
+        assertEquals(true, calls.get(0).get("resultTruncated"), "explicit marker must surface a flag");
+        assertEquals(true, calls.get(1).get("resultTruncated"));
+        assertEquals("head\n[truncated: first 4 of 5000 chars]", calls.get(1).get("result"));
+        assertEquals(5000, calls.get(1).get("resultBytes"));
+    }
 }

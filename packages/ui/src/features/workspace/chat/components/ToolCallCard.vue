@@ -103,6 +103,11 @@ const duration = computed(() =>
     formatToolDuration(props.toolCall.startedAt, props.toolCall.completedAt),
 );
 
+/** task-988: the projected result is a bounded preview; the local cut is 2000 chars. */
+const resultLength = computed(() =>
+    typeof props.toolCall.result === "string" ? props.toolCall.result.length : 0,
+);
+
 /**
  * PLAN-0649: refusal presentation.
  *
@@ -522,8 +527,15 @@ async function loadJobOutput(reset: boolean) {
                                 ? toolCall.result.substring(0, 2000)
                                 : JSON.stringify(toolCall.result, null, 2)
                         }}</pre>
-                    <p v-if="toolCall.result.length > 2000" class="mt-1 text-muted-foreground">
-                        Output truncated ({{ toolCall.result.length }} chars total)
+                    <p
+                        v-if="resultLength > 2000 || toolCall.resultTruncated"
+                        class="mt-1 text-muted-foreground"
+                        data-testid="tool-result-truncated"
+                    >
+                        {{ t("chat.toolCard.truncated") }}
+                        <template v-if="toolCall.resultTruncated && toolCall.resultBytes">
+                            ({{ toolCall.resultBytes }} bytes)
+                        </template>
                     </p>
                 </div>
                 <div v-if="toolCall.error" class="font-mono">

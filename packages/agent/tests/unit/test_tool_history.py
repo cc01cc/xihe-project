@@ -32,7 +32,7 @@ from xihe_agent.interfaces.tool import (
     ACQUIRE_CREDENTIAL_TOOL_NAME,
     CREDENTIAL_DELIVERED_PLACEHOLDER,
     CREDENTIAL_HANDOFF_REQUIRED_KEY,
-    UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
+    TOOL_RESULT_PRESENTATION_MARKER,
     ToolSpec,
 )
 from xihe_agent.llm.base import create_llm
@@ -437,10 +437,10 @@ async def test_writer_gate_off_emits_legacy_payload(monkeypatch):
     assert list(result.payload)[:3] == ["call_id", "tool_name", "result"]
     assert "schemaVersion" not in called.payload
     assert "status" not in result.payload
-    # PLAN-0381 T2.3：legacy 形状仍是字符串（旧 reader `asText` 直读）。
-    # PLAN-0510 决策 #6：未登记 checkpoint-safe 输出 schema 的工具，其 durable
-    # tool.result 只落固定通用占位符（当前 Run 仍用内存结果），故不再是原文。
-    assert result.payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+    # task-988：durable tool.result 落显式标记的有界投影（preview/truncated/sizeBytes）。
+    assert result.payload["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert result.payload["result"]["preview"] == "file content"
+    assert result.payload["result"]["truncated"] is False
 
 
 @pytest.mark.asyncio
@@ -465,13 +465,10 @@ async def test_writer_gate_on_emits_v2_payload(monkeypatch):
     assert "call_id" not in called.payload
     assert result.payload["schemaVersion"] == 2
     assert result.payload["status"] == "completed"
-    # PLAN-0381 T2.3 gate ON：result 对象化（preview/truncated 白名单形状，M1 reader
-    # 规则 4 读取）。PLAN-0510 决策 #6：未登记 checkpoint-safe schema 的工具只落固定
-    # 占位符，且 withheld 分支不带 sizeBytes（无有意义的原结果尺寸）。
-    assert result.payload["result"] == {
-        "preview": UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
-        "truncated": False,
-    }
+    # task-988：gate ON 与 gate OFF 落同一个 presentation 投影（显式标记 + 有界预览）。
+    assert result.payload["result"][TOOL_RESULT_PRESENTATION_MARKER] == 1
+    assert result.payload["result"]["preview"] == "file content"
+    assert result.payload["result"]["truncated"] is False
     assert "call_id" not in result.payload
 
 

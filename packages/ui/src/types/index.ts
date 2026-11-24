@@ -495,6 +495,10 @@ export interface ToolCall {
     arguments: string;
     status: "running" | "completed" | "failed" | "pending" | "cancelled";
     result?: string;
+    /** task-988: the result preview was cut at the bounded projection limit. */
+    resultTruncated?: boolean;
+    /** task-988: UTF-8 byte size of the full tool result before truncation. */
+    resultBytes?: number;
     error?: string;
     startedAt?: string;
     completedAt?: string;
