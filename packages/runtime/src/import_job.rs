@@ -42,6 +42,69 @@ pub struct SourceDirectoryEntry {
     pub kind: String,
     pub readable: bool,
     pub size: u64,
+    /// R44 / task-981：该目录自身是否带 `.git`（目录或文件）。UI 只读这个布尔值渲染徽标。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub git_repo: bool,
+    /// 只在 `git_repo = true` 时给出：`.git` 目录 ⇒ `repo`，`.git` 文件（worktree/submodule
+    /// 指针）⇒ `worktree`；无 `.git` ⇒ `null`。`nested` 是 wire 预留值，当前列举接口不产出。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_kind: Option<SourceGitKind>,
+}
+
+/// Runtime 目录列举里的 git 标记分类；wire 值与 957 的 UI 契约一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceGitKind {
+    Repo,
+    Worktree,
+    /// 预留：调用方已知该条目属于某个父仓时用它表达「嵌套仓」；列举接口按卡面 §2
+    /// 只做路径级判定，不推断祖先，因此当前不会返回它。
+    #[allow(dead_code)]
+    Nested,
+}
+
+/// 只读判断 `<entry>/.git` 的形态：目录 ⇒ repo，文件 ⇒ worktree，缺失/不可读 ⇒ null。
+///
+/// 失败（权限不足、符号链接目标不可解析等）一律降级为「不是 git 仓」并记 debug 日志，
+/// 绝不让整次目录列举失败；也不执行任何 git 命令，只读文件系统元数据。
+fn detect_source_git_kind(entry_path: &Path) -> (bool, Option<SourceGitKind>) {
+    let git_marker = entry_path.join(".git");
+    let metadata = match fs::symlink_metadata(&git_marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return (false, None),
+        Err(error) => {
+            tracing::debug!(
+                path = %entry_path.display(),
+                %error,
+                "source directory git probe failed; reporting null"
+            );
+            return (false, None);
+        }
+    };
+    let file_type = metadata.file_type();
+    if file_type.is_dir() {
+        return (true, Some(SourceGitKind::Repo));
+    }
+    if file_type.is_file() {
+        return (true, Some(SourceGitKind::Worktree));
+    }
+    if file_type.is_symlink() {
+        // 符号链接不跟随失败不影响列举；只有能跟到实体且是目录/文件时才算 git 标记。
+        return match fs::metadata(&git_marker) {
+            Ok(target) if target.is_dir() => (true, Some(SourceGitKind::Repo)),
+            Ok(target) if target.is_file() => (true, Some(SourceGitKind::Worktree)),
+            Ok(_) => (false, None),
+            Err(error) => {
+                tracing::debug!(
+                    path = %entry_path.display(),
+                    %error,
+                    "source directory git symlink probe failed; reporting null"
+                );
+                (false, None)
+            }
+        };
+    }
+    (false, None)
 }
 
 pub fn list_source_directory(path: &str) -> Result<Vec<SourceDirectoryEntry>, String> {
@@ -62,11 +125,18 @@ pub fn list_source_directory(path: &str) -> Result<Vec<SourceDirectoryEntry>, St
         } else {
             "other"
         };
+        let (git_repo, git_kind) = if metadata.is_dir() {
+            detect_source_git_kind(entry.path().as_path())
+        } else {
+            (false, None)
+        };
         entries.push(SourceDirectoryEntry {
             name: entry.file_name().to_string_lossy().into_owned(),
             kind: file_type.to_string(),
             readable: metadata.permissions().readonly() || fs::File::open(entry.path()).is_ok(),
             size: metadata.len(),
+            git_repo,
+            git_kind,
         });
     }
     entries.sort_by(|left, right| left.kind.cmp(&right.kind).then(left.name.cmp(&right.name)));
@@ -343,6 +413,100 @@ mod tests {
         );
         assert_eq!(entries[0].kind, "directory");
         assert_eq!(entries[1].kind, "file");
+    }
+
+    #[test]
+    fn lists_source_directory_marks_git_directory_as_repo() {
+        let root = tempdir().unwrap();
+        fs::create_dir_all(root.path().join("repo").join(".git")).unwrap();
+        fs::create_dir(root.path().join("plain")).unwrap();
+        let entries = list_source_directory(root.path().to_str().unwrap()).unwrap();
+        let repo = entries
+            .iter()
+            .find(|entry| entry.name == "repo")
+            .expect("repo entry");
+        assert!(repo.git_repo, ".git directory must set gitRepo");
+        assert_eq!(repo.git_kind, Some(SourceGitKind::Repo));
+
+        let plain = entries
+            .iter()
+            .find(|entry| entry.name == "plain")
+            .expect("plain entry");
+        assert!(!plain.git_repo);
+        assert_eq!(plain.git_kind, None);
+        // Wire names must match the 957 UI contract exactly.
+        let json = serde_json::to_value(repo).expect("serialize");
+        assert_eq!(json["gitRepo"], serde_json::json!(true));
+        assert_eq!(json["gitKind"], serde_json::json!("repo"));
+        let plain_json = serde_json::to_value(plain).expect("serialize");
+        assert!(plain_json.get("gitRepo").is_none());
+        assert!(plain_json.get("gitKind").is_none());
+    }
+
+    #[test]
+    fn lists_source_directory_marks_git_file_as_worktree() {
+        let root = tempdir().unwrap();
+        fs::create_dir_all(root.path().join("wt")).unwrap();
+        fs::write(
+            root.path().join("wt").join(".git"),
+            "gitdir: /parent/.git/worktrees/wt\n",
+        )
+        .unwrap();
+        let entries = list_source_directory(root.path().to_str().unwrap()).unwrap();
+        let worktree = entries
+            .iter()
+            .find(|entry| entry.name == "wt")
+            .expect("worktree entry");
+        assert!(worktree.git_repo, ".git file must set gitRepo");
+        assert_eq!(worktree.git_kind, Some(SourceGitKind::Worktree));
+        let json = serde_json::to_value(worktree).expect("serialize");
+        assert_eq!(json["gitKind"], serde_json::json!("worktree"));
+    }
+
+    /// 反证②的正面形态：`.git` 元数据不可解析时降级为 null，列举本身必须成功。
+    #[test]
+    fn lists_source_directory_survives_unresolvable_git_marker() {
+        let root = tempdir().unwrap();
+        let entry = root.path().join("weird");
+        fs::create_dir_all(&entry).unwrap();
+        let marker = entry.join(".git");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/nonexistent/target", &marker).expect("dangling symlink");
+        #[cfg(windows)]
+        {
+            if let Err(error) =
+                std::os::windows::fs::symlink_file(entry.join("missing-target"), &marker)
+            {
+                eprintln!("symlink fixture unavailable on this host: {error}");
+                return;
+            }
+        }
+        let entries = list_source_directory(root.path().to_str().unwrap()).unwrap();
+        let weird = entries
+            .iter()
+            .find(|listed| listed.name == "weird")
+            .expect("weird entry survives listing");
+        assert!(!weird.git_repo);
+        assert_eq!(weird.git_kind, None);
+    }
+
+    /// 真实目录夹具：由 runner 通过 `XIHE_SOURCE_GIT_PROBE_DIR` 传入（只读），未设置则跳过。
+    /// 不把机器路径写进测试，符合「路径相对 one 根书写」的约束。
+    #[test]
+    fn probes_real_git_directory_when_fixture_env_provided() {
+        let Ok(directory) = std::env::var("XIHE_SOURCE_GIT_PROBE_DIR") else {
+            return;
+        };
+        let entries = list_source_directory(&directory).expect("list real directory");
+        let repo = entries
+            .iter()
+            .find(|entry| entry.git_repo)
+            .expect("real fixture must contain at least one git-marked directory");
+        eprintln!(
+            "REAL_GIT_PROBE {}",
+            serde_json::to_string(repo).expect("serialize probe")
+        );
+        assert!(repo.git_kind.is_some());
     }
 
     #[tokio::test]
