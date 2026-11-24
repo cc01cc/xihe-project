@@ -1,0 +1,263 @@
+{
+    "$comment": "文件长度 ratchet 基线（task-1030）：行数 + 字节双阈值，存量只许变小。只能由 node scripts/check-file-size.mjs --write-baseline 生成/收缩，勿手改；新增超标文件或基线内变大都会被限制。",
+    "total": 63,
+    "files": {
+        "src/components/settings/AgentPrincipalDetailDrawer.vue": {
+            "lines": 1641,
+            "bytes": 78107
+        },
+        "src/components/settings/AgentTemplatesPanel.vue": {
+            "lines": 787,
+            "bytes": 32827
+        },
+        "src/components/settings/AgentWorkspaceBindingsPanel.vue": {
+            "lines": 509,
+            "bytes": 22763
+        },
+        "src/components/settings/ConfigDomainPanel.vue": {
+            "lines": 1189,
+            "bytes": 62576
+        },
+        "src/components/settings/ConfigLayerPanels.vue": {
+            "lines": 1096,
+            "bytes": 51489
+        },
+        "src/components/settings/ContextTemplatesPanel.vue": {
+            "lines": 680,
+            "bytes": 29853
+        },
+        "src/components/settings/InstanceAgentsPanel.vue": {
+            "lines": 876,
+            "bytes": 45046
+        },
+        "src/components/settings/InstanceCredentialsPanel.vue": {
+            "lines": 694,
+            "bytes": 33286
+        },
+        "src/components/settings/InstanceMcpPanel.vue": {
+            "lines": 504,
+            "bytes": 23396
+        },
+        "src/components/settings/ProviderHub.vue": {
+            "lines": 2844,
+            "bytes": 147089
+        },
+        "src/components/settings/RoleBindingsPanel.vue": {
+            "lines": 591,
+            "bytes": 24132
+        },
+        "src/components/settings/SettingsSidebar.vue": {
+            "lines": 644,
+            "bytes": 35751
+        },
+        "src/components/sidebar/Sidebar.vue": {
+            "lines": 620,
+            "bytes": 30872
+        },
+        "src/composables/api.ts": {
+            "lines": 6682,
+            "bytes": 283793
+        },
+        "src/composables/messageScroller.ts": {
+            "lines": 647,
+            "bytes": 21790
+        },
+        "src/composables/useSharedEventLeader.ts": {
+            "lines": 591,
+            "bytes": 19610
+        },
+        "src/composables/useWorkspaceLayout.ts": {
+            "lines": 1168,
+            "bytes": 55241
+        },
+        "src/features/org-members/components/OrgMemberDetailSheet.vue": {
+            "lines": 603,
+            "bytes": 28105
+        },
+        "src/features/org-members/components/OrgUnitWritePanel.vue": {
+            "lines": 972,
+            "bytes": 44177
+        },
+        "src/features/workspace/chat/components/ApprovalModal.vue": {
+            "lines": 1151,
+            "bytes": 53980
+        },
+        "src/features/workspace/chat/components/ChatPanel.vue": {
+            "lines": 2154,
+            "bytes": 98216
+        },
+        "src/features/workspace/chat/components/InputArea.vue": {
+            "lines": 2268,
+            "bytes": 113308
+        },
+        "src/features/workspace/chat/components/MessageItem.vue": {
+            "lines": 749,
+            "bytes": 33987
+        },
+        "src/features/workspace/chat/components/MessageList.vue": {
+            "lines": 867,
+            "bytes": 42022
+        },
+        "src/features/workspace/chat/components/SessionList.vue": {
+            "lines": 536,
+            "bytes": 23312
+        },
+        "src/features/workspace/chat/components/ToolCallCard.vue": {
+            "lines": 557,
+            "bytes": 24693
+        },
+        "src/features/workspace/chat/components/WorkspaceSessionGroups.vue": {
+            "lines": 664,
+            "bytes": 32220
+        },
+        "src/features/workspace/chat/composables/useSSE.ts": {
+            "lines": 1014,
+            "bytes": 45884
+        },
+        "src/features/workspace/chat/stores/chat.ts": {
+            "lines": 1144,
+            "bytes": 50849
+        },
+        "src/features/workspace/components/FileTreePanel.vue": {
+            "lines": 644,
+            "bytes": 28966
+        },
+        "src/features/workspace/components/ScheduledTaskCreateDialog.vue": {
+            "lines": 617,
+            "bytes": 28110
+        },
+        "src/features/workspace/components/WorkspaceAgentsPanel.vue": {
+            "lines": 3231,
+            "bytes": 167335
+        },
+        "src/features/workspace/components/WorkspaceChangesPanel.vue": {
+            "lines": 568,
+            "bytes": 27428
+        },
+        "src/features/workspace/components/WorkspaceCreateDialog.vue": {
+            "lines": 1184,
+            "bytes": 52535
+        },
+        "src/features/workspace/components/WorkspaceDock.vue": {
+            "lines": 582,
+            "bytes": 29055
+        },
+        "src/features/workspace/components/WorkspaceMembersPanel.vue": {
+            "lines": 505,
+            "bytes": 22264
+        },
+        "src/features/workspace/components/WorkspaceShellDockview.vue": {
+            "lines": 732,
+            "bytes": 37095
+        },
+        "src/features/workspace/components/WorkspaceWorkbench.vue": {
+            "lines": 1446,
+            "bytes": 72855
+        },
+        "src/features/workspace/monitor/SessionMonitorPanel.vue": {
+            "lines": 1031,
+            "bytes": 44967
+        },
+        "src/features/workspace/pages/ScheduledTasksView.vue": {
+            "lines": 874,
+            "bytes": 44133
+        },
+        "src/features/workspace/pages/WorkspaceEnvironmentView.vue": {
+            "lines": 1252,
+            "bytes": 65371
+        },
+        "src/features/workspace/pages/WorkspaceSettingsView.vue": {
+            "lines": 682,
+            "bytes": 37817
+        },
+        "src/features/workspace/pages/WorkspaceView.vue": {
+            "lines": 785,
+            "bytes": 38594
+        },
+        "src/features/workspace/stores/workspace.ts": {
+            "lines": 1451,
+            "bytes": 64736
+        },
+        "src/i18n/index.ts": {
+            "lines": 9431,
+            "bytes": 587587
+        },
+        "src/i18n/messages/chat.ts": {
+            "lines": 1295,
+            "bytes": 83307
+        },
+        "src/i18n/messages/settings.ts": {
+            "lines": 3070,
+            "bytes": 193845
+        },
+        "src/i18n/messages/workspace.ts": {
+            "lines": 2238,
+            "bytes": 145641
+        },
+        "src/layouts/AppLayout.vue": {
+            "lines": 556,
+            "bytes": 27173
+        },
+        "src/lib/configSchemaCatalog.ts": {
+            "lines": 699,
+            "bytes": 18543
+        },
+        "src/lib/logger.ts": {
+            "lines": 589,
+            "bytes": 21291
+        },
+        "src/lib/settingsIa.ts": {
+            "lines": 777,
+            "bytes": 40111
+        },
+        "src/router/index.ts": {
+            "lines": 784,
+            "bytes": 46732
+        },
+        "src/services/instanceResources.ts": {
+            "lines": 552,
+            "bytes": 24040
+        },
+        "src/stores/auth.ts": {
+            "lines": 797,
+            "bytes": 38358
+        },
+        "src/stores/config.ts": {
+            "lines": 867,
+            "bytes": 41542
+        },
+        "src/types/index.ts": {
+            "lines": 1663,
+            "bytes": 52730
+        },
+        "src/views/resources/ResourceDetailView.vue": {
+            "lines": 684,
+            "bytes": 28259
+        },
+        "src/views/settings/AuditView.vue": {
+            "lines": 720,
+            "bytes": 33846
+        },
+        "src/views/settings/AuthorizationOverviewView.vue": {
+            "lines": 990,
+            "bytes": 45220
+        },
+        "src/views/settings/RolesView.vue": {
+            "lines": 552,
+            "bytes": 23823
+        },
+        "src/views/settings/SettingsDomainView.vue": {
+            "lines": 586,
+            "bytes": 29772
+        },
+        "src/views/settings/ToolFacesView.vue": {
+            "lines": 517,
+            "bytes": 25524
+        }
+    },
+    "$exempt": {
+        "src/test-utils/virtual-modules.d.ts": "纯类型声明（.d.ts），无运行时代码",
+        "src/vite-env.d.ts": "纯类型声明（.d.ts），无运行时代码"
+    },
+    "generatedAt": "2026-11-24T13:46:36.656Z"
+}
