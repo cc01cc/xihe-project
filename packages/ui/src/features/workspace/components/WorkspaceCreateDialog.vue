@@ -123,16 +123,16 @@ const hasRootPath = computed(() => validRootPaths.value.length > 0);
 
 // R13/R24: instant, shared-rule validation (no blur gate).
 const nameValidation = computed(() =>
-    validateField("workspace.name", name.value, { touched: nameTouched.value }),
+    validateField("workspaceForm.name", name.value, { touched: nameTouched.value }),
 );
 const descriptionValidation = computed(() =>
-    validateField("workspace.description", description.value, {
+    validateField("workspaceForm.description", description.value, {
         touched: descriptionTouched.value,
     }),
 );
 const rootValidations = computed(() =>
     roots.value.map((root) =>
-        validateField("workspace.rootPath", root.path, {
+        validateField("workspaceForm.rootPath", root.path, {
             touched: rootsTouched.value || root.path.length > 0,
         }),
     ),
@@ -625,7 +625,7 @@ watch(
                             <Input
                                 v-model="root.path"
                                 data-testid="workspace-root-path"
-                                data-form-field="workspace.rootPath"
+                                data-form-field="workspaceForm.rootPath"
                                 class="font-mono text-xs"
                                 :placeholder="t('workspace.sourcePathPlaceholder')"
                                 @update:model-value="rootsTouched = true"
@@ -874,7 +874,7 @@ watch(
                             id="ws-create-name"
                             v-model="name"
                             data-testid="workspace-create-name"
-                            data-form-field="workspace.name"
+                            data-form-field="workspaceForm.name"
                             :placeholder="t('workspace.namePlaceholder')"
                             maxlength="120"
                             @update:model-value="nameTouched = true"
@@ -894,7 +894,7 @@ watch(
                         <Input
                             id="ws-create-description"
                             v-model="description"
-                            data-form-field="workspace.description"
+                            data-form-field="workspaceForm.description"
                             :placeholder="t('workspace.descriptionPlaceholder')"
                             maxlength="500"
                             @update:model-value="descriptionTouched = true"

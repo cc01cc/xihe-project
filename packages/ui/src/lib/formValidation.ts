@@ -20,9 +20,9 @@ export type FormFieldRuleId =
     | "provider.connectionKey"
     | "provider.label"
     | "provider.modelDiscoveryUrl"
-    | "workspace.name"
-    | "workspace.rootPath"
-    | "workspace.description"
+    | "workspaceForm.name"
+    | "workspaceForm.rootPath"
+    | "workspaceForm.description"
     | "principal.name"
     | "username";
 
@@ -156,8 +156,8 @@ export const FORM_FIELD_RULES: Record<FormFieldRuleId, FieldRuleSpec> = {
      * 未接入增量。CP 侧对 workspace 名称/路径没有额外格式规则，因此只做「必填 + 长度 +
      * 控制字符」的可本地预判（R24：服务端仍是最终权威）。
      */
-    "workspace.name": {
-        id: "workspace.name",
+    "workspaceForm.name": {
+        id: "workspaceForm.name",
         required: true,
         trim: true,
         maxLength: 120,
@@ -169,8 +169,8 @@ export const FORM_FIELD_RULES: Record<FormFieldRuleId, FieldRuleSpec> = {
             "control-character": "validation.controlCharacter",
         },
     },
-    "workspace.rootPath": {
-        id: "workspace.rootPath",
+    "workspaceForm.rootPath": {
+        id: "workspaceForm.rootPath",
         required: true,
         trim: true,
         maxLength: 1024,
@@ -182,8 +182,8 @@ export const FORM_FIELD_RULES: Record<FormFieldRuleId, FieldRuleSpec> = {
             "control-character": "validation.controlCharacter",
         },
     },
-    "workspace.description": {
-        id: "workspace.description",
+    "workspaceForm.description": {
+        id: "workspaceForm.description",
         required: false,
         trim: true,
         maxLength: 500,
