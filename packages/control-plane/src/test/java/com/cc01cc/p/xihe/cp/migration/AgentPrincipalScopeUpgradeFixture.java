@@ -326,9 +326,16 @@ public final class AgentPrincipalScopeUpgradeFixture {
             return this == PRE_RENAME ? "role_permissions" : "grant_preset_atoms";
         }
 
-        /** task-835 (V182): {@code ck_grants_source} says {@code role} before, {@code preset} after. */
+        /**
+         * task-835 (V182) + task-1003 (V186)：{@code ck_grants_source} 的合法取值随版本演进——
+         * V125/V125 形状写 {@code role}；V182 把 {@code role} 改名 {@code preset}；
+         * V186（task-933 preset-as-template）又把 {@code preset} 收窄成 {@code assigned}，head 的
+         * 约束只允许 {@code assigned/spawn/template/credential_binding/agent_default/plugin_binding}。
+         * 所以 head 阶段必须写 {@code assigned}：继续写 {@code preset} 会被
+         * {@code ck_grants_source} 直接拒绝（990 的 9 个上下文加载 ERROR 就是这个根因）。
+         */
         String materializedSource() {
-            return this == PRE_RENAME ? "role" : "preset";
+            return this == PRE_RENAME ? "role" : "assigned";
         }
     }
 
