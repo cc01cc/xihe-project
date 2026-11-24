@@ -48,6 +48,8 @@ const apiMock = vi.hoisted(() => ({
     listWorkspaceAgentSpawnSessions: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
     // task-959 / R38：本工作区 MCP 可见集（成员可读；默认空）。
     getMcpConfig: vi.fn<() => Promise<unknown>>(),
+    // task-972：hooks 写门按 ownership 分流；本面只用于 USER 行。
+    updateAgentPrincipal: vi.fn<(principalId: string, body: unknown) => Promise<unknown>>(),
 }));
 
 const CREATE_ACCOUNT_MISSING = {
@@ -160,6 +162,15 @@ beforeEach(() => {
     apiMock.deleteWorkspaceAgent.mockResolvedValue(undefined);
     apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
     apiMock.getWorkspaceAgentMemories.mockResolvedValue([]);
+    apiMock.updateAgentPrincipal.mockReset();
+    apiMock.updateAgentPrincipal.mockResolvedValue({
+        principalId: "77777777-7777-4777-8777-777777777777",
+        hooks: null,
+        contextPolicy: null,
+        delegationPolicy: null,
+    });
+    apiMock.getAgentRoles.mockReset();
+    apiMock.getAgentRoles.mockResolvedValue([]);
     // task-469：默认给一个合法 live 视图（各用例按需覆盖）；reset 清掉未消费的 once 队列（BL-359）。
     apiMock.getWorkspaceAgentEffectiveCap.mockReset();
     apiMock.getWorkspaceAgentEffectiveCap.mockResolvedValue({
@@ -2445,3 +2456,95 @@ describe("WorkspaceAgentsPanel task-134 委派的子会话（workspace 级权威
 
 // task-901：CP 下发的模板只带 `presetId`（`roleId` 已是退役键），UI 再读 `roleId` 会恒为
 // undefined，让「预设」这一行永远显示默认模板文案。这里钉住 wire 真相与渲染值。
+describe("task-972 · hooks 写门按 ownership 分流", () => {
+    const USER_PRINCIPAL = "11111111-1111-4111-8111-111111111111";
+    const INSTANCE_PRINCIPAL = "22222222-2222-4222-8222-222222222222";
+
+    function hooksRow(principalId: string) {
+        return {
+            principalId,
+            name: "ResearchAgent",
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-24T00:00:00Z",
+            permissionsSnapshot: [],
+            capSource: "baseline",
+            bound: true,
+            disabled: false,
+            isDefault: false,
+            hooks: { advisors: [{ kind: "guard", on: ["approval.ask"] }] },
+            contextPolicy: null,
+        };
+    }
+
+    function bodyTestid<T extends HTMLElement = HTMLElement>(id: string): T {
+        const node = document.body.querySelector<T>(`[data-testid="${id}"]`);
+        if (!node) throw new Error(`missing testid: ${id}`);
+        return node;
+    }
+
+    async function openAndSaveHooks(): Promise<void> {
+        await bodyTestid(`workspace-agent-details-${principalId}`).click();
+        await flushPromises();
+        await bodyTestid("apd-hooks-remove-0").click();
+        await flushPromises();
+        await bodyTestid("apd-save-all").click();
+        await flushPromises();
+    }
+
+    let principalId = USER_PRINCIPAL;
+
+    beforeEach(() => {
+        principalId = USER_PRINCIPAL;
+        apiMock.getWorkspaceAgents.mockResolvedValue([hooksRow(USER_PRINCIPAL)]);
+    });
+
+    it("INSTANCE 主体：hooks 保存打到 /instance/agent-principals/{id}，不走 user 写门", async () => {
+        principalId = INSTANCE_PRINCIPAL;
+        apiMock.getWorkspaceAgents.mockResolvedValue([hooksRow(INSTANCE_PRINCIPAL)]);
+        apiMock.request.mockImplementation((path: string, options?: RequestInit) => {
+            if (path === "/instance/agent-principals") {
+                return Promise.resolve({ principals: [{ principalId: INSTANCE_PRINCIPAL }] });
+            }
+            if (path === `/instance/agent-principals/${INSTANCE_PRINCIPAL}`) {
+                expect(options?.method).toBe("PATCH");
+                expect(JSON.parse(String(options?.body))).toEqual({ hooks: null });
+                return Promise.resolve({
+                    principalId: INSTANCE_PRINCIPAL,
+                    hooks: null,
+                    contextPolicy: null,
+                    delegationPolicy: null,
+                });
+            }
+            return Promise.resolve({ agents: [], bindableCandidates: [] });
+        });
+
+        await mountOpenedPanel();
+        await openAndSaveHooks();
+
+        expect(apiMock.request).toHaveBeenCalledWith(
+            `/instance/agent-principals/${INSTANCE_PRINCIPAL}`,
+            expect.objectContaining({ method: "PATCH" }),
+        );
+        expect(apiMock.updateAgentPrincipal).not.toHaveBeenCalled();
+    });
+
+    it("USER 主体：hooks 保存仍走 api.updateAgentPrincipal（user 前缀），不碰实例门", async () => {
+        apiMock.request.mockImplementation((path: string) =>
+            path === "/instance/agent-principals"
+                ? Promise.resolve({ principals: [] })
+                : Promise.resolve({ agents: [], bindableCandidates: [] }),
+        );
+
+        await mountOpenedPanel();
+        await openAndSaveHooks();
+
+        expect(apiMock.updateAgentPrincipal).toHaveBeenCalledWith(USER_PRINCIPAL, {
+            hooks: null,
+        });
+        expect(apiMock.request).not.toHaveBeenCalledWith(
+            `/instance/agent-principals/${USER_PRINCIPAL}`,
+            expect.anything(),
+        );
+    });
+});

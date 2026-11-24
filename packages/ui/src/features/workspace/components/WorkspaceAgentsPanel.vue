@@ -21,6 +21,7 @@ import {
     type WorkspaceAgentPermission,
 } from "../../../composables/api";
 import { causeErrorToastText, presentCauseError, withErrorCode } from "../../../lib/errorMessages";
+import { listInstanceAgents } from "../../../services/instanceResources";
 import AgentPrincipalDetailDrawer, {
     type AgentPrincipalDetail,
 } from "../../../components/settings/AgentPrincipalDetailDrawer.vue";
@@ -1354,13 +1355,46 @@ async function unbind(agent: WorkspaceAgentBinding) {
 const principalDetailTarget = ref<WorkspaceAgentBinding | null>(null);
 const principalDetailOpen = ref(false);
 
+/**
+ * task-972：`WorkspaceAgentView` **不携带** `ownership`（列在 CP 的 `agent_principals` 上，
+ * 但工作区列表投影没有它），而抽屉的写门必须按主体所有权分流 —— INSTANCE 行只能走
+ * `PATCH /api/v1/instance/agent-principals/{id}`，user 前缀会先 409 `WORKSPACE_CONTEXT_REQUIRED`
+ * 再 403 `AGENT_PRINCIPAL_INSTANCE_OWNED`。实例主体读面对所有已认证调用者开放且只返回
+ * `ownership=INSTANCE` 的行（openapi `getInstanceAgentPrincipals`），所以用它的 id 集合补齐
+ * 本面板缺失的这一维；不在集合里的行保持原来的 user 写门。
+ */
+const instancePrincipalIds = ref<ReadonlySet<string>>(new Set());
+let instancePrincipalsPromise: Promise<void> | null = null;
+let instancePrincipalsLoaded = false;
+
+async function loadInstancePrincipalIds(): Promise<void> {
+    if (instancePrincipalsLoaded) return;
+    if (instancePrincipalsPromise) return instancePrincipalsPromise;
+    instancePrincipalsPromise = listInstanceAgents()
+        .then(({ agents: instanceAgents }) => {
+            instancePrincipalIds.value = new Set(
+                instanceAgents.map((agent) => agent.id).filter((id) => id !== ""),
+            );
+            instancePrincipalsLoaded = true;
+        })
+        .catch((cause) => {
+            // 读面不可用时不把「未知」当成 USER：本卡只修正常路径，失败仍保留旧的 user 写门，
+            // 并把原因留痕；下一次打开抽屉会重试。
+            logger.warn("[agents] instance principal ownership probe failed", cause);
+        })
+        .finally(() => {
+            instancePrincipalsPromise = null;
+        });
+    return instancePrincipalsPromise;
+}
+
 const principalDetail = computed<AgentPrincipalDetail | null>(() => {
     const agent = principalDetailTarget.value;
     if (!agent) return null;
     return {
         principalId: agent.principalId,
         name: agent.name,
-        ownership: "USER",
+        ownership: instancePrincipalIds.value.has(agent.principalId) ? "INSTANCE" : "USER",
         templateName: agent.templateName,
         createdAt: agent.createdAt,
         disabled: agent.disabled,
@@ -1373,7 +1407,10 @@ const principalDetail = computed<AgentPrincipalDetail | null>(() => {
     };
 });
 
-function openPrincipalDetail(agent: WorkspaceAgentBinding) {
+async function openPrincipalDetail(agent: WorkspaceAgentBinding): Promise<void> {
+    // 所有权探针必须在打开前落地：抽屉的 `saveHooks` 在读 `props.principal.ownership` 时就选门，
+    // 晚到的归属会让那一次保存仍打到 user 前缀。
+    await loadInstancePrincipalIds();
     principalDetailTarget.value = agent;
     principalDetailOpen.value = true;
 }
