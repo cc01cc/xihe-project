@@ -28,6 +28,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             deletePreset: vi.fn<typeof apiModule.api.deletePreset>(),
             getBindings: vi.fn<typeof apiModule.api.getBindings>(),
             replaceBindings: vi.fn<typeof apiModule.api.replaceBindings>(),
+            comparePresetGovernance: vi.fn<typeof apiModule.api.comparePresetGovernance>(),
+            realignPresetGovernance: vi.fn<typeof apiModule.api.realignPresetGovernance>(),
             listAdminUsers: vi.fn<typeof apiModule.api.listAdminUsers>(),
             listWorkspaces: vi.fn<typeof apiModule.api.listWorkspaces>(),
             getWorkspaceAgents: vi.fn<typeof apiModule.api.getWorkspaceAgents>(),
@@ -200,6 +202,19 @@ beforeEach(() => {
     mockedApi.listWorkspaces.mockResolvedValue([]);
     mockedApi.listAdminUsers.mockResolvedValue([]);
     mockedApi.getBindings.mockResolvedValue({ scopeType: "instance", scopeId: null, bindings: [] });
+    mockedApi.comparePresetGovernance.mockResolvedValue({
+        subjectType: "user",
+        subjectId: "",
+        scopes: [],
+        summary: { missing: 0, extra: 0, localAdded: 0, overridden: 0, changed: false },
+    });
+    mockedApi.realignPresetGovernance.mockResolvedValue({
+        created: 0,
+        deleted: 0,
+        changed: false,
+        scopes: 1,
+        source: "assigned",
+    });
     mockedApi.getWorkspaceAgents.mockResolvedValue([]);
     mockedApi.listAgentPrincipals.mockResolvedValue([]);
     mockedApi.getAgentRoles.mockResolvedValue([]);
@@ -685,10 +700,10 @@ describe("RolesView delete flow", () => {
 
 describe("RoleBindingsPanel", () => {
     /**
-     * task-409 P2-4（D-949 #21 A）：有效原子原来是 `atoms.join(", ")` 一行逗号串 ——
-     * 机器标识符挤在一起读不出边界、也选不准单个。改为逐个 code + title。
+     * task-948 R39：差异角标只来自服务端 `compare` 真值（本地 effectiveAtoms 推导已随本卡删除）。
+     * 反证：把下一次 compare 清空后，角标必须消失 —— 证明它不是写死展示。
      */
-    it("P2-4：有效原子逐个渲染为 code 并带 title", async () => {
+    it("tasks-948 反证：服务端对比清空后差异角标消失", async () => {
         mockedApi.getBindings.mockResolvedValue({
             scopeType: "instance",
             scopeId: null,
@@ -707,15 +722,27 @@ describe("RoleBindingsPanel", () => {
         mockedApi.listAdminUsers.mockResolvedValue([
             { id: "user-1", email: "a@xihe.local", username: "alice" },
         ]);
+        mockedApi.comparePresetGovernance.mockResolvedValueOnce({
+            subjectType: "user",
+            subjectId: "user-1",
+            scopes: [],
+            summary: { missing: 1, extra: 0, localAdded: 0, overridden: 0, changed: true },
+        });
         const wrapper = await mountView();
         await clickBody('[data-testid="roles-tab-bindings"]');
-        const codes = wrapper
-            .get('[data-testid="preset-bindings-effective"]')
-            .findAll('[data-testid="binding-effective-atoms"] code');
-        expect(codes.length).toBe(SYSTEM_ROLE.atoms.length);
-        // 顺序不是契约（effectiveSummary 用 Set 去重）⇒ 比集合，不比排列
-        expect(codes.map((c) => c.attributes("title")).sort()).toEqual(
-            SYSTEM_ROLE.atoms.map((a) => a.name).sort(),
+        await vi.waitFor(() =>
+            expect(wrapper.find('[data-testid="preset-drift-badge-user-1"]').exists()).toBe(true),
+        );
+
+        mockedApi.comparePresetGovernance.mockResolvedValue({
+            subjectType: "user",
+            subjectId: "user-1",
+            scopes: [],
+            summary: { missing: 0, extra: 0, localAdded: 0, overridden: 0, changed: false },
+        });
+        await clickBody('[data-testid="preset-bindings-reload"]');
+        await vi.waitFor(() =>
+            expect(wrapper.find('[data-testid="preset-drift-badge-user-1"]').exists()).toBe(false),
         );
         wrapper.unmount();
     });
@@ -802,11 +829,11 @@ describe("RoleBindingsPanel", () => {
             { subjectType: "user", subjectId: "user-1", roleId: "role-sys" },
             { subjectType: "user", subjectId: "user-2", roleId: "role-1" },
         ]);
-        // The returned set drives the effective-capability summary.
-        const effective = wrapper.get('[data-testid="preset-bindings-effective"]');
-        expect(effective.text()).toContain("alice");
-        expect(effective.text()).toContain("read");
-        expect(effective.text()).toContain("MANAGE_ROLES");
+        // task-948：本地 effectiveAtoms 推导已删除；返回集只驱动绑定行自身（差异角标走服务端 compare）。
+        expect(wrapper.get('[data-testid="role-binding-row-user-1"]').text()).toContain(
+            "Super admin",
+        );
+        expect(wrapper.find('[data-testid="preset-bindings-effective"]').exists()).toBe(false);
     });
 
     it.each([

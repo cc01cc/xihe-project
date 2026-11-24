@@ -6539,6 +6539,63 @@ paths:
         '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/presets/governance/compare:
+    get:
+      tags: [admin]
+      operationId: comparePresetGovernance
+      summary: Compare a subject's bound templates with its assigned rows (task-948 R39)
+      description: |
+        Read-only. Returns, per scope, the difference between what the subject's bound presets
+        would import (`source='assigned'`, one row per `(scope, atom, origin_preset_id)`) and what
+        the subject actually holds. It never writes. The classification is the same one the
+        realign replay acts on — a caller never sees a difference the replay would not perform.
+
+        Buckets: `missing` (template atom with no row; realign creates it), `extra` (attributed
+        row the owning group no longer carries, or a malformed row; realign deletes it),
+        `localAdded` (unattributed row, `origin_preset_id IS NULL` — local work that no replay
+        deletes), `overridden` (a missing atom the subject also holds from a localAdded row in the
+        same scope, i.e. "I deleted the imported row and added it back by hand").
+
+        Gate: `MANAGE_ROLES`, evaluated before the subject id is parsed or resolved — a 403 never
+        says whether the target exists; an unknown subject is 404 `SUBJECT_NOT_FOUND` only for an
+        authorized caller. Optional `presetId` narrows the comparison to one bound preset.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: subjectType, required: true, schema: { type: string, enum: [user, agent_principal] }, description: 'Subject kind; anything else is 400 INVALID_REQUEST.' }
+        - { in: query, name: subjectId, required: true, schema: { type: string, format: uuid }, description: 'Subject id; a non-UUID is 400 INVALID_REQUEST.' }
+        - { in: query, name: presetId, required: false, schema: { type: string, format: uuid }, description: 'Restrict the comparison to the bindings of this preset id.' }
+      responses:
+        '200': { description: 'Per-scope difference and totals', content: { application/json: { schema: { $ref: '#/components/schemas/PresetGovernanceCompareView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES); the body never names the target subject', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/presets/governance/realign:
+    post:
+      tags: [admin]
+      operationId: realignPresetGovernance
+      summary: Replay a subject's bound templates into their import groups (task-948 R39)
+      description: |
+        Reconciles the subject's `source='assigned'` rows against its bound presets, using the same
+        kernel an import uses: it creates the `missing` rows, deletes the `extra` ones, and never
+        touches `localAdded` (unattributed) rows. The response reports `created` / `deleted` /
+        `changed` and keeps `source='assigned'` — a replay never rewrites provenance.
+
+        A no-op realign (nothing to write) does **not** bump the user's epoch: users are not logged
+        out for asking to be realigned when they were already in sync.
+
+        Gate: `MANAGE_ROLES`, plus `MANAGE_WORKSPACE_AGENTS` in every workspace this subject's
+        bindings or assigned rows touch. Authorization runs before the subject is resolved.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PresetGovernanceRealignRequest' } } }
+      responses:
+        '200': { description: 'Replay receipt', content: { application/json: { schema: { $ref: '#/components/schemas/PresetGovernanceRealignView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES / per-workspace MANAGE_WORKSPACE_AGENTS); the body never names the target subject', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/bindings:
     get:
       tags: [admin]
@@ -8246,6 +8303,80 @@ components:
             oneOf:
               - type: string
               - $ref: '#/components/schemas/RoleAtomInput'
+    PresetGovernanceAtomView:
+      type: object
+      additionalProperties: false
+      required: [actionClass, resource]
+      description: 'task-948 R39: one permission atom in wire form. `resource` is the canonical pattern; `*` means unrestricted.'
+      properties:
+        actionClass: { type: string, description: 'Canonical atom name, e.g. action:read or WRITE_INSTANCE_CONTENT.' }
+        resource: { type: string, description: 'Resource pattern from the grant row / atom canonical.' }
+    PresetGovernanceMissingAtomView:
+      type: object
+      additionalProperties: false
+      required: [actionClass, resource, originPresetIds]
+      description: 'A template atom the subject does not hold; `originPresetIds` are the bound preset groups a realign would re-import it from.'
+      properties:
+        actionClass: { type: string }
+        resource: { type: string }
+        originPresetIds: { type: array, items: { type: string, format: uuid }, description: 'Bound preset ids whose import group carries this atom, sorted by UUID.' }
+    PresetGovernanceExtraAtomView:
+      type: object
+      additionalProperties: false
+      required: [actionClass, resource, originPresetId]
+      description: 'An attributed row the owning preset group no longer carries (realign deletes it). `originPresetId` is null for a malformed row that cannot be attributed.'
+      properties:
+        actionClass: { type: string }
+        resource: { type: string }
+        originPresetId: { type: [string, 'null'], format: uuid }
+    PresetGovernanceScopeDiffView:
+      type: object
+      additionalProperties: false
+      required: [scopeType, scopeId, missing, extra, localAdded, overridden, inSync]
+      properties:
+        scopeType: { type: string, enum: [instance, workspace] }
+        scopeId: { type: [string, 'null'], format: uuid, description: 'Null for the instance scope.' }
+        missing: { type: array, items: { $ref: '#/components/schemas/PresetGovernanceMissingAtomView' } }
+        extra: { type: array, items: { $ref: '#/components/schemas/PresetGovernanceExtraAtomView' } }
+        localAdded: { type: array, items: { $ref: '#/components/schemas/PresetGovernanceAtomView' }, description: 'Unattributed (origin_preset_id NULL) rows; local work no replay deletes.' }
+        overridden: { type: array, items: { $ref: '#/components/schemas/PresetGovernanceAtomView' }, description: 'Missing template atoms the subject also holds locally in this scope.' }
+        inSync: { type: boolean, description: 'true when all four buckets are empty; a realign would write nothing.' }
+    PresetGovernanceSummaryView:
+      type: object
+      additionalProperties: false
+      required: [missing, extra, localAdded, overridden, changed]
+      properties:
+        missing: { type: integer, minimum: 0 }
+        extra: { type: integer, minimum: 0 }
+        localAdded: { type: integer, minimum: 0 }
+        overridden: { type: integer, minimum: 0 }
+        changed: { type: boolean, description: 'true when a realign would create or delete at least one row (localAdded/overridden alone do not make it true).' }
+    PresetGovernanceCompareView:
+      type: object
+      additionalProperties: false
+      required: [subjectType, subjectId, scopes, summary]
+      properties:
+        subjectType: { type: string, enum: [user, agent_principal] }
+        subjectId: { type: string, format: uuid }
+        scopes: { type: array, items: { $ref: '#/components/schemas/PresetGovernanceScopeDiffView' }, description: 'Instance scope first, then workspace scopes by id.' }
+        summary: { $ref: '#/components/schemas/PresetGovernanceSummaryView' }
+    PresetGovernanceRealignRequest:
+      type: object
+      additionalProperties: false
+      required: [subjectType, subjectId]
+      properties:
+        subjectType: { type: string, enum: [user, agent_principal] }
+        subjectId: { type: string, format: uuid }
+    PresetGovernanceRealignView:
+      type: object
+      additionalProperties: false
+      required: [created, deleted, changed, scopes, source]
+      properties:
+        created: { type: integer, minimum: 0, description: 'Rows written (the missing bucket).' }
+        deleted: { type: integer, minimum: 0, description: 'Rows removed (the extra bucket).' }
+        changed: { type: boolean, description: 'false means the subject was already in sync and nothing (including the epoch) changed.' }
+        scopes: { type: integer, minimum: 0, description: 'Number of scopes the replay examined.' }
+        source: { type: string, enum: [assigned], description: 'Provenance of every written row; a realign never rewrites it.' }
     BindingView:
       type: object
       description: 'PLAN-0610 W3-2a: one preset binding row with the preset name resolved.'

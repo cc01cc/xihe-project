@@ -438,6 +438,65 @@ export interface ApiBindingInput {
 }
 
 /**
+ * task-948 R39（预设治理面）：`GET /api/v1/presets/governance/compare` 与
+ * `POST .../realign` 的线格式。字段与 CP `PresetGovernanceViews` 逐字对齐（不要自创名）：
+ * 行身份是 `(scope, atom, originPresetId)`，四桶语义由 CP 的 `classifyDiff` 唯一定义 ——
+ * UI 只渲染，不本地重算差异。
+ */
+export type ApiPresetGovernanceSubjectType = "user" | "agent_principal";
+
+export interface ApiPresetGovernanceAtom {
+    actionClass: string;
+    resource: string;
+}
+
+/** `missing` 额外带「哪几个已绑定预设的导入组会重新写回它」。 */
+export interface ApiPresetGovernanceMissingAtom extends ApiPresetGovernanceAtom {
+    originPresetIds: string[];
+}
+
+/** `extra` 的行归属；畸形行无法归属时 `originPresetId` 为 null。 */
+export interface ApiPresetGovernanceExtraAtom extends ApiPresetGovernanceAtom {
+    originPresetId: string | null;
+}
+
+export interface ApiPresetGovernanceScopeDiff {
+    scopeType: "instance" | "workspace";
+    scopeId: string | null;
+    missing: ApiPresetGovernanceMissingAtom[];
+    extra: ApiPresetGovernanceExtraAtom[];
+    /** `origin_preset_id = NULL` 的本地行：任何重放都不删。 */
+    localAdded: ApiPresetGovernanceAtom[];
+    /** 「应有缺失，但同 scope 又有本地行」。 */
+    overridden: ApiPresetGovernanceAtom[];
+    inSync: boolean;
+}
+
+export interface ApiPresetGovernanceSummary {
+    missing: number;
+    extra: number;
+    localAdded: number;
+    overridden: number;
+    /** `localAdded`/`overridden` 单独存在不算 changed —— 重放不会写它们。 */
+    changed: boolean;
+}
+
+export interface ApiPresetGovernanceCompare {
+    subjectType: ApiPresetGovernanceSubjectType;
+    subjectId: string;
+    scopes: ApiPresetGovernanceScopeDiff[];
+    summary: ApiPresetGovernanceSummary;
+}
+
+export interface ApiPresetGovernanceRealignResult {
+    created: number;
+    deleted: number;
+    changed: boolean;
+    scopes: number;
+    source: "assigned";
+}
+
+/**
  * The `GET/PUT /api/v1/bindings` wire shape. The frozen contract names the id `presetId`
  * (task-836 / task-843); `ApiBindingRow` above is the UI projection and must not be sent as-is.
  */
@@ -4806,6 +4865,34 @@ export const api = {
             }),
         });
         return toApiBindingSet(wire);
+    },
+    /**
+     * task-948 R39：只读对比「模板应有 vs 当前 assigned 行」。`presetId` 可选，只对比该预设的绑定。
+     * 门禁与读面同源（MANAGE_ROLES），403 不泄露主体是否存在 —— UI 只渲染服务端结果。
+     */
+    async comparePresetGovernance(
+        subjectType: ApiPresetGovernanceSubjectType,
+        subjectId: string,
+        presetId?: string | null,
+    ): Promise<ApiPresetGovernanceCompare> {
+        const query = new URLSearchParams({ subjectType, subjectId });
+        if (presetId) query.set("presetId", presetId);
+        return request<ApiPresetGovernanceCompare>(
+            `/presets/governance/compare?${query.toString()}`,
+        );
+    },
+    /**
+     * task-948 R39：按当前绑定重放主体导入组。`changed=false` 时连 epoch 都不动
+     * （已同步的主体不会被踢下线）；`source` 恒为 `assigned`。
+     */
+    async realignPresetGovernance(
+        subjectType: ApiPresetGovernanceSubjectType,
+        subjectId: string,
+    ): Promise<ApiPresetGovernanceRealignResult> {
+        return request<ApiPresetGovernanceRealignResult>("/presets/governance/realign", {
+            method: "POST",
+            body: JSON.stringify({ subjectType, subjectId }),
+        });
     },
     /** Admin user directory (`cap:instance:admin`); used to resolve binding subjects. */
     async listAdminUsers(query: string): Promise<ApiAdminUser[]> {

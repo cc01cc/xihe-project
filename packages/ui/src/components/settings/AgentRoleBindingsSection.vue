@@ -7,8 +7,10 @@ import {
     type AgentRoleBinding,
     type ApiBindingScope,
     type ApiPreset,
+    type ApiWorkspace,
 } from "../../composables/api";
 import { presetErrorMessage } from "./roleErrorMessages";
+import RolePresetDriftDialog from "../../views/settings/RolePresetDriftDialog.vue";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Empty, EmptyDescription, EmptyHeader } from "../ui/empty";
@@ -21,6 +23,8 @@ const props = defineProps<{
     scopeId: string;
     workspaceId: string;
     presets: ApiPreset[];
+    /** 工作区显示名映射（差异面按 scopeId 展示工作区名）；缺省时退化为 uuid。 */
+    workspaces?: ApiWorkspace[];
 }>();
 const emit = defineEmits<{ notice: [message: string]; dirty: [boolean] }>();
 const { t } = useI18n();
@@ -38,6 +42,12 @@ const authWorkspaceId = computed(() => (props.scope === "workspace" ? props.work
 const selectedAgent = computed(
     () => agents.value.find((agent) => agent.principalId === selectedPrincipalId.value) ?? null,
 );
+/**
+ * task-948 R39：智能体主体也有「与模板对比 / 重新对齐」——差异与写面都由 CP 的同一套
+ * compare/realign 提供（subjectType=agent_principal），UI 只切换主体类型，不另做一套口径。
+ */
+const driftOpen = ref(false);
+const selectedAgentLabel = computed(() => selectedAgent.value?.name ?? selectedPrincipalId.value);
 const isDirty = computed(() => {
     const current = bindings.value
         .map((binding) => binding.roleId)
@@ -206,11 +216,22 @@ watch(selectedPrincipalId, (next, previous) => {
 
 <template>
     <section data-testid="agent-preset-bindings-section" class="space-y-2 rounded border p-3">
-        <div>
-            <h3 class="text-sm font-medium">{{ t("settings.presetsBindingsAgentTitle") }}</h3>
-            <p class="mt-1 text-xs text-muted-foreground">
-                {{ t("settings.presetsBindingsAgentHint") }}
-            </p>
+        <div class="flex items-start justify-between gap-2">
+            <div>
+                <h3 class="text-sm font-medium">{{ t("settings.presetsBindingsAgentTitle") }}</h3>
+                <p class="mt-1 text-xs text-muted-foreground">
+                    {{ t("settings.presetsBindingsAgentHint") }}
+                </p>
+            </div>
+            <Button
+                variant="outline"
+                size="sm"
+                data-testid="agent-preset-drift-compare"
+                :disabled="!selectedPrincipalId"
+                @click="driftOpen = true"
+            >
+                {{ t("settings.presetsDriftCompare") }}
+            </Button>
         </div>
 
         <p
@@ -363,5 +384,14 @@ watch(selectedPrincipalId, (next, previous) => {
                 {{ t("settings.presetsBindingsAgentSave") }}
             </Button>
         </div>
+        <RolePresetDriftDialog
+            :open="driftOpen"
+            subject-type="agent_principal"
+            :subject-id="selectedPrincipalId"
+            :subject-label="selectedAgentLabel"
+            :workspaces="workspaces ?? []"
+            @close="driftOpen = false"
+            @realigned="emit('notice', t('settings.presetsDriftRealigned'))"
+        />
     </section>
 </template>

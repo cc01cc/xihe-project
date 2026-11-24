@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
 import RoleBindingsPanel from "../RoleBindingsPanel.vue";
 import { i18n } from "../../../i18n";
 import { api } from "../../../composables/api";
@@ -19,6 +20,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             ...actual.api,
             getBindings: vi.fn<typeof apiModule.api.getBindings>(),
             replaceBindings: vi.fn<typeof apiModule.api.replaceBindings>(),
+            comparePresetGovernance: vi.fn<typeof apiModule.api.comparePresetGovernance>(),
+            realignPresetGovernance: vi.fn<typeof apiModule.api.realignPresetGovernance>(),
             listAdminUsers: vi.fn<typeof apiModule.api.listAdminUsers>(),
             getWorkspaceAgents: vi.fn<typeof apiModule.api.getWorkspaceAgents>(),
             listAgentPrincipals: vi.fn<typeof apiModule.api.listAgentPrincipals>(),
@@ -68,6 +71,7 @@ function lastDirty(wrapper: ReturnType<typeof mountPanel>): boolean | undefined 
 
 describe("RoleBindingsPanel · dirty 派生（task-92）", () => {
     beforeEach(() => {
+        setActivePinia(createPinia());
         mockedApi.getBindings.mockReset();
         mockedApi.replaceBindings.mockReset();
         mockedApi.getBindings.mockResolvedValue(
@@ -76,6 +80,12 @@ describe("RoleBindingsPanel · dirty 派生（task-92）", () => {
         mockedApi.replaceBindings.mockImplementation(async (_scope, _scopeId, rows) =>
             bindingsOf(rows),
         );
+        mockedApi.comparePresetGovernance.mockResolvedValue({
+            subjectType: "user",
+            subjectId: "user-1",
+            scopes: [],
+            summary: { missing: 0, extra: 0, localAdded: 0, overridden: 0, changed: false },
+        });
     });
 
     it("载入后 user 段无改动 ⇒ dirty=false", async () => {

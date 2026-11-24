@@ -3591,6 +3591,37 @@ const messages = {
             presetsBindingsEffectiveTitle: "有效能力摘要（按绑定授权预设本地推导）",
             presetsBindingsEffectiveHint:
                 "服务端响应只包含绑定行，不含能力回显；这里按授权预设原子求并集推导，以服务端判定为准。",
+            presetsDriftCompare: "与模板对比",
+            presetsDriftBadge: "{count} 项待对齐",
+            presetsDriftBadgeHint: "绑定的授权预设与当前授权行存在差异；点开可查看明细并重新对齐。",
+            presetsDriftTitle: "与模板对比 · {name}",
+            presetsDriftSubtitle:
+                "差异完全由服务端计算：只读对比，不改动任何授权；重新对齐会重放该主体的授权预设导入组。",
+            presetsDriftLoading: "正在对比…",
+            presetsDriftError: "对比失败",
+            presetsDriftInSync: "与模板一致，无需重新对齐。",
+            presetsDriftScopeInstance: "实例作用域",
+            presetsDriftScopeWorkspace: "工作区 · {name}",
+            presetsDriftMissing: "模板有、当前缺失（重新对齐会补上）",
+            presetsDriftExtra: "预设组已不再包含（重新对齐会删除）",
+            presetsDriftLocalAdded: "本地新增（不会被删除）",
+            presetsDriftOverridden: "被本地行覆盖（会补回导入行，本地行保留）",
+            presetsDriftEmptyBucket: "无",
+            presetsDriftOrigins: "来自 {count} 个预设组",
+            presetsDriftAtomOther: "其他权限",
+            presetsDriftSummary:
+                "缺失 {missing} · 过期 {extra} · 本地新增 {localAdded} · 覆盖 {overridden}",
+            presetsDriftRealign: "重新对齐",
+            presetsDriftRealignConfirmTitle: "确认重新对齐？",
+            presetsDriftRealignConfirmBody:
+                "将按当前绑定补上 {missing} 条缺失行、删除 {extra} 条过期行；本地新增行不受影响。",
+            presetsDriftRealignConfirm: "确认重新对齐",
+            presetsDriftCancel: "取消",
+            presetsDriftClose: "关闭",
+            presetsDriftDone: "已重新对齐：新增 {created} 条，删除 {deleted} 条。",
+            presetsDriftRealigned: "已按模板重新对齐",
+            presetsDriftNoChange: "已是最新，没有写入。",
+            presetsDriftRefresh: "重新读取对比",
             presetsError: {
                 presetScopeMismatch: "该授权预设含仅实例作用域的原子，不能绑定到工作区。",
                 privilegeEscalation: "不能授予超出你自己权限的原子。",
@@ -8236,6 +8267,39 @@ const messages = {
             presetsBindingsEffectiveTitle: "Effective capability summary (derived locally)",
             presetsBindingsEffectiveHint:
                 "The server response carries binding rows only, without a capability echo; this unions the bound grant presets' atoms. CP remains authoritative.",
+            presetsDriftCompare: "Compare with templates",
+            presetsDriftBadge: "{count} to realign",
+            presetsDriftBadgeHint:
+                "The bound grant presets and the current grant rows differ; open for details and realignment.",
+            presetsDriftTitle: "Compare with templates · {name}",
+            presetsDriftSubtitle:
+                "The difference is computed server-side: the comparison is read-only, and realigning replays this subject's grant-preset import groups.",
+            presetsDriftLoading: "Comparing…",
+            presetsDriftError: "Comparison failed",
+            presetsDriftInSync: "In sync with the templates; nothing to realign.",
+            presetsDriftScopeInstance: "Instance scope",
+            presetsDriftScopeWorkspace: "Workspace · {name}",
+            presetsDriftMissing: "In the template, missing here (realign creates it)",
+            presetsDriftExtra: "No longer in its preset group (realign deletes it)",
+            presetsDriftLocalAdded: "Added locally (never deleted)",
+            presetsDriftOverridden:
+                "Shadowed by a local row (the import row is restored, the local one stays)",
+            presetsDriftEmptyBucket: "None",
+            presetsDriftOrigins: "From {count} preset groups",
+            presetsDriftAtomOther: "Other permission",
+            presetsDriftSummary:
+                "Missing {missing} · Extra {extra} · Local {localAdded} · Shadowed {overridden}",
+            presetsDriftRealign: "Realign",
+            presetsDriftRealignConfirmTitle: "Realign now?",
+            presetsDriftRealignConfirmBody:
+                "This creates {missing} missing rows and deletes {extra} stale rows; locally added rows are untouched.",
+            presetsDriftRealignConfirm: "Realign",
+            presetsDriftCancel: "Cancel",
+            presetsDriftClose: "Close",
+            presetsDriftDone: "Realigned: {created} created, {deleted} deleted.",
+            presetsDriftRealigned: "Realigned to the templates",
+            presetsDriftNoChange: "Already up to date; nothing was written.",
+            presetsDriftRefresh: "Reload comparison",
             presetsError: {
                 presetScopeMismatch:
                     "That grant preset holds instance-only atoms and cannot be bound in a workspace.",

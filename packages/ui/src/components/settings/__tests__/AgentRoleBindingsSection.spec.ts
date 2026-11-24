@@ -1,5 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
 import { i18n } from "../../../i18n";
 import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
@@ -17,6 +18,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             getAgentRoles: vi.fn<typeof apiModule.api.getAgentRoles>(),
             bindAgentRole: vi.fn<typeof apiModule.api.bindAgentRole>(),
             unbindAgentRole: vi.fn<typeof apiModule.api.unbindAgentRole>(),
+            comparePresetGovernance: vi.fn<typeof apiModule.api.comparePresetGovernance>(),
+            realignPresetGovernance: vi.fn<typeof apiModule.api.realignPresetGovernance>(),
         },
     };
 });
@@ -82,6 +85,7 @@ function mountSection(scope: apiModule.ApiBindingScope = "workspace") {
 }
 
 beforeEach(() => {
+    setActivePinia(createPinia());
     vi.clearAllMocks();
     mockedApi.getWorkspaceAgents.mockResolvedValue([
         {

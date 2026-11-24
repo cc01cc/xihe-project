@@ -13,6 +13,7 @@ import {
 import { logger } from "../../lib/logger";
 import { presetErrorMessage } from "./roleErrorMessages";
 import AgentRoleBindingsSection from "./AgentRoleBindingsSection.vue";
+import RolePresetDriftDialog from "../../views/settings/RolePresetDriftDialog.vue";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
@@ -115,17 +116,61 @@ const grouped = computed(() => {
     return [...bySubject.values()];
 });
 
-/** Local derivation of the effective atoms per subject (see the file header). */
-const effectiveSummary = computed(() =>
-    grouped.value.map((entry) => {
-        const atoms = new Set<string>();
-        for (const bound of entry.roles) {
-            const role = props.presets.find((candidate) => candidate.id === bound.id);
-            role?.atoms.forEach((atom) => atoms.add(atom.name));
-        }
-        return { subjectId: entry.subjectId, atoms: [...atoms].sort() };
-    }),
-);
+/**
+ * task-948 R39：每主体「与模板对比」的差异角标。
+ *
+ * <p>差异**只由服务端计算**（`GET /presets/governance/compare`）。这里不再从绑定预设本地求
+ * 并集推导「有效能力」——那套推导已删除（本卡同批），原因与文件头注释相反：现在有服务端真值，
+ * 两套口径并存只会漂移。角标只在 `summary.changed`（有可补/可删行）时出现；本地新增/覆盖
+ * 这类「重放不会写」的差异不挂角标（否则用户会去点一个不会改动任何东西的按钮）。</p>
+ */
+type DriftBadge = { missing: number; extra: number };
+const driftBySubject = ref<Record<string, DriftBadge>>({});
+const driftTarget = ref<{ subjectId: string; label: string } | null>(null);
+
+async function refreshDrift() {
+    if (subjectType.value !== "user") {
+        driftBySubject.value = {};
+        return;
+    }
+    const subjects = grouped.value.map((entry) => entry.subjectId);
+    const settled = await Promise.all(
+        subjects.map(async (subjectId) => {
+            try {
+                const comparison = await api.comparePresetGovernance("user", subjectId);
+                return { subjectId, summary: comparison.summary };
+            } catch (cause) {
+                // A badge is an aid; a failed comparison must not turn the whole panel red.
+                logger.warn(`Failed to compare preset governance for ${subjectId}`, cause);
+                return null;
+            }
+        }),
+    );
+    const next: Record<string, DriftBadge> = {};
+    for (const result of settled) {
+        if (!result || !result.summary.changed) continue;
+        next[result.subjectId] = { missing: result.summary.missing, extra: result.summary.extra };
+    }
+    driftBySubject.value = next;
+}
+
+function driftBadgeCount(subjectId: string): number {
+    const badge = driftBySubject.value[subjectId];
+    return badge ? badge.missing + badge.extra : 0;
+}
+
+function openDrift(subjectId: string) {
+    driftTarget.value = { subjectId, label: subjectLabel(subjectId) };
+}
+
+function closeDrift() {
+    driftTarget.value = null;
+}
+
+async function onRealigned() {
+    emit("notice", t("settings.presetsDriftRealigned"));
+    await refreshDrift();
+}
 
 function subjectLabel(subjectId: string): string {
     const known = subjectResults.value.find((user) => user.id === subjectId);
@@ -162,9 +207,11 @@ async function load() {
     error.value = "";
     try {
         syncRows(await api.getBindings(scope.value, workspaceId.value || null));
+        await refreshDrift();
     } catch (cause) {
         bindingSet.value = null;
         rows.value = [];
+        driftBySubject.value = {};
         error.value = presetErrorMessage(cause, t);
     } finally {
         loading.value = false;
@@ -228,6 +275,7 @@ async function save() {
             })),
         );
         syncRows(next);
+        await refreshDrift();
         emit("notice", t("settings.presetsBindingsSaved", { count: next.bindings.length }));
     } catch (cause) {
         error.value = presetErrorMessage(cause, t);
@@ -364,6 +412,7 @@ defineExpose({ load });
                 <tr>
                     <th class="py-1">{{ t("settings.presetsBindingsSubject") }}</th>
                     <th class="py-1">{{ t("settings.presetsBindingsPresets") }}</th>
+                    <th class="py-1">{{ t("settings.presetsDriftCompare") }}</th>
                     <th class="py-1 text-right">{{ t("settings.presetsBindingsRemove") }}</th>
                 </tr>
             </thead>
@@ -385,6 +434,30 @@ defineExpose({ load });
                             {{ bound.label }}
                         </Badge>
                     </td>
+                    <td class="py-1">
+                        <div class="flex items-center gap-1">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                :data-testid="`preset-drift-compare-${entry.subjectId}`"
+                                @click="openDrift(entry.subjectId)"
+                            >
+                                {{ t("settings.presetsDriftCompare") }}
+                            </Button>
+                            <Badge
+                                v-if="driftBadgeCount(entry.subjectId) > 0"
+                                variant="secondary"
+                                :data-testid="`preset-drift-badge-${entry.subjectId}`"
+                                :title="t('settings.presetsDriftBadgeHint')"
+                            >
+                                {{
+                                    t("settings.presetsDriftBadge", {
+                                        count: driftBadgeCount(entry.subjectId),
+                                    })
+                                }}
+                            </Badge>
+                        </div>
+                    </td>
                     <td class="py-1 text-right">
                         <Button
                             v-for="bound in entry.roles"
@@ -399,7 +472,7 @@ defineExpose({ load });
                     </td>
                 </tr>
                 <tr v-if="grouped.length === 0">
-                    <td colspan="3" class="py-2 text-xs text-muted-foreground">
+                    <td colspan="4" class="py-2 text-xs text-muted-foreground">
                         {{ t("settings.presetsBindingsEmpty") }}
                     </td>
                 </tr>
@@ -494,44 +567,25 @@ defineExpose({ load });
             {{ t("settings.presetsBindingsSave") }}
         </Button>
 
-        <div
-            v-if="subjectType === 'user' && effectiveSummary.length > 0"
-            data-testid="preset-bindings-effective"
-            class="rounded border bg-muted/30 p-3 text-xs"
-        >
-            <p class="font-medium">{{ t("settings.presetsBindingsEffectiveTitle") }}</p>
-            <p class="mt-1 text-muted-foreground">
-                {{ t("settings.presetsBindingsEffectiveHint") }}
-            </p>
-            <ul class="mt-2 space-y-1">
-                <li v-for="entry in effectiveSummary" :key="`eff-${entry.subjectId}`">
-                    <span class="font-mono">{{ subjectLabel(entry.subjectId) }}</span
-                    >:
-                    <!-- task-409 P2-4：原子名是机器标识符，逐个 code 呈现并给 title，
-                         不再挤成一行逗号串（长串既读不出边界也选不准单个）。 -->
-                    <span v-if="entry.atoms.length === 0">—</span>
-                    <span v-else class="flex flex-wrap gap-1" data-testid="binding-effective-atoms">
-                        <code
-                            v-for="atom in entry.atoms"
-                            :key="atom"
-                            class="rounded bg-muted px-1 py-0.5 font-mono text-xs"
-                            :title="atom"
-                        >
-                            {{ atom }}
-                        </code>
-                    </span>
-                </li>
-            </ul>
-        </div>
-
         <AgentRoleBindingsSection
             v-if="subjectType === 'agent_principal'"
             :scope="scope"
             :scope-id="scopeId"
             :workspace-id="workspaceId"
             :presets="presets"
+            :workspaces="workspaces"
             @notice="emit('notice', $event)"
             @dirty="(value) => (agentDirty = value)"
+        />
+
+        <RolePresetDriftDialog
+            :open="driftTarget !== null"
+            subject-type="user"
+            :subject-id="driftTarget?.subjectId ?? ''"
+            :subject-label="driftTarget?.label ?? ''"
+            :workspaces="workspaces"
+            @close="closeDrift"
+            @realigned="onRealigned"
         />
     </section>
 </template>
