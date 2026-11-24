@@ -28,6 +28,8 @@ const UI = fileURLToPath(new URL("..", import.meta.url));
 const SRC = path.join(UI, "src");
 const HUB_THRESHOLD = 40; // 起步值（Lead 批），--threshold 可调
 const TOTAL_FRACTION = 0.25; // --max-fraction 可调
+const I18N_MESSAGES_PREFIX = "src/i18n/messages/";
+const I18N_COPY_TESTS = "src/i18n/__tests__/";
 
 // 配置/全局面：改动任一 ⇒ 增量无意义，回退全量（规则③，Lead 批清单）。
 const GLOBAL_PATTERNS = [
@@ -38,7 +40,10 @@ const GLOBAL_PATTERNS = [
     /^src\/tests\/setup\.ts$/,
     /^src\/main\.ts$/,
     /^src\/router\//,
-    /^src\/i18n\//,
+    // task-1027：locale 按域拆到 src/i18n/messages/*.ts 后，只有聚合入口与 locale 运行时
+    // 仍需回退全量；单域文案改动按普通模块走 import-graph 选测。
+    /^src\/i18n\/index\.ts$/,
+    /^src\/i18n\/locale\.ts$/,
     /^src\/styles\/main\.css$/,
 ];
 
@@ -217,6 +222,19 @@ export function select(opts, changedOverride) {
                 const r = rel(sp);
                 if (!selected.has(r)) selected.set(r, "colocated:" + m);
             }
+        }
+        // task-1027：`messages/<域>.ts` 是纯文案数据叶，唯一消费者是聚合入口 `index.ts`。
+        // 走普通反向图会经 index.ts 扇出到全 UI（实测 workspace 域可达 286 spec > hub 阈值），
+        // 必然回退全量，丢了本卡的收益。这里改选 i18n 文案门禁 spec（真正断言键/文案的层），
+        // 不再沿 aggregator 扇出；产品 spec 断言的是键而不是字面量文案。
+        if (m.startsWith(I18N_MESSAGES_PREFIX)) {
+            for (const sp of allSpecs) {
+                const r = rel(sp);
+                if (r.startsWith(I18N_COPY_TESTS) && !selected.has(r)) {
+                    selected.set(r, "i18n-copy-guard:" + m);
+                }
+            }
+            continue;
         }
         // ②b 静态导入可达
         const reach = reachableSpecs(abs, reverse);

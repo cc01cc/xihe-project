@@ -185,7 +185,8 @@ export function scanRoot(root = DEFAULT_ROOT) {
     const errors = [];
     for (const file of walkVueFiles(root)) {
         const relative = path.relative(UI_ROOT, file).split(path.sep).join("/");
-        if (relative === "src/i18n/index.ts") continue;
+        // task-1027：locale 按域拆到 src/i18n/**（含 messages/），整目录都不是硬编码文案扫描面。
+        if (relative === "src/i18n/index.ts" || relative.startsWith("src/i18n/messages/")) continue;
         let source;
         try {
             source = fs.readFileSync(file, "utf8");

@@ -1,0 +1,78 @@
+export const messages = {
+    "zh-CN": {
+        onboarding: {
+            title: "开始使用",
+            firstRunEntry: "查看首启管理员账号",
+            firstRunTitle: "首启管理员账号",
+            firstRunIntro: "仅在本机首启时可查看或改写管理员账号。",
+            firstRunReveal: "查看账号",
+            firstRunOnce: "口令仅显示一次，刷新或离开后无法再次查看，请妥善保存。",
+            firstRunOperator: "口令由部署配置提供，不会在此显示。",
+            firstRunEmail: "邮箱（占位地址可稍后在管理界面修改）",
+            firstRunUsername: "用户名（账号名）",
+            firstRunLoginHint: "上面的邮箱与下面的用户名都可以用来登录，密码相同。",
+            firstRunUsernameHint:
+                "登录时可用这个用户名或上面的邮箱；用户名不能以数字开头，最长 32 位。",
+            firstRunSecret: "一次性口令",
+            firstRunNewPassword: "新密码（8–128 位）",
+            firstRunRewrite: "保存新账号信息",
+            firstRunRewritten: "账号信息已保存，请使用新密码登录。",
+            firstRunUnavailable: "首启账号不可用，请返回登录页或联系管理员。",
+            firstRunConsumed: "首启口令已披露或账号已改写，无法再次查看。",
+            firstRunFailed: "操作未完成，请检查输入后重试。",
+            firstRunRevealFailed:
+                "无法确认口令是否已披露。请返回登录页；如无法登录，请联系管理员重置密码。",
+            firstRunLogin: "返回登录",
+            hint: "本机尚未创建账号，创建后即可直接进入。",
+            email: "邮箱",
+            name: "显示名称",
+            password: "密码",
+            submit: "创建并进入",
+            creating: "创建中…",
+            failed: "创建失败，请重试",
+            emailRequired: "请填写邮箱",
+            emailInvalid: "邮箱格式不正确",
+            passwordRequired: "请填写密码",
+        },
+    },
+    "en-US": {
+        onboarding: {
+            title: "Get started",
+            firstRunEntry: "View first-run administrator account",
+            firstRunTitle: "First-run administrator account",
+            firstRunIntro: "View or rewrite the administrator account only on the local first run.",
+            firstRunReveal: "View account",
+            firstRunOnce: "The password is shown only once. Save it before refreshing or leaving.",
+            firstRunOperator:
+                "The password was provided in the deployment configuration and is not shown here.",
+            firstRunEmail: "Email (a placeholder can be changed later in administration)",
+            firstRunUsername: "Username (account name)",
+            firstRunLoginHint:
+                "Both the email above and the username below work as sign-in identifiers with the same password.",
+            firstRunUsernameHint:
+                "Either this username or the email above can be used to sign in; a username cannot start with a digit and is at most 32 characters.",
+            firstRunSecret: "One-time password",
+            firstRunNewPassword: "New password (8–128 characters)",
+            firstRunRewrite: "Save account changes",
+            firstRunRewritten: "Account changes saved. Sign in with the new password.",
+            firstRunUnavailable:
+                "The first-run account is unavailable. Return to sign in or contact an administrator.",
+            firstRunConsumed:
+                "The first-run password was already disclosed or the account was rewritten.",
+            firstRunFailed: "The operation could not be completed. Check your input and try again.",
+            firstRunRevealFailed:
+                "The password may already have been disclosed. Return to sign in; if you cannot sign in, ask an administrator to reset the password.",
+            firstRunLogin: "Return to sign in",
+            hint: "No account exists yet locally; create one to enter.",
+            email: "Email",
+            name: "Display name",
+            password: "Password",
+            submit: "Create and enter",
+            creating: "Creating…",
+            failed: "Creation failed, please retry",
+            emailRequired: "Email is required",
+            emailInvalid: "Enter a valid email address",
+            passwordRequired: "Password is required",
+        },
+    },
+};

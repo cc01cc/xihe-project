@@ -47,7 +47,8 @@ export const FILES = Object.freeze({
     panel: "src/features/workspace/components/FileTreePanel.vue",
     tree: "src/features/workspace/components/FileTree.vue",
     row: "src/features/workspace/components/TreeNodeList.vue",
-    i18n: "src/i18n/index.ts",
+    // task-1027：文件树拥有的 nestedRepo* 键在 workspace 域（locale 已按域拆分）。
+    i18n: "src/i18n/messages/workspace.ts",
 });
 
 /** FT6 判据：文件树可见高度占面板高度的最小比例。 */

@@ -4,6 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import { readFileSync } from "node:fs";
 import { mockApiPlugin } from "./src/preview/mock/api-server";
+import { flattenI18nKeys as flattenI18nKeysFromDir } from "./src/i18n/flatten-keys";
 
 const pkgVersion = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"))
     .version as string;
@@ -57,37 +58,12 @@ function resolveUiLogLevel(env: Record<string, string>): ViteLogLevel {
  * 这些 spec 在收集阶段就炸（实测 `No "createI18n" export is defined on the "vue-i18n" mock`）。
  * 在**构建期**算好键清单，运行期就与 vue-i18n 依赖解耦。</p>
  *
- * <p>解析方式是本仓 `scripts/i18n-scan.mjs` 已在用的同一招：去掉首行 import、把
- * `export const i18n = createI18n(` 换成局部 const，用桩函数求值取 `messages`。</p>
+ * <p>task-1027 起 locale 按域拆到 `src/i18n/messages/*.ts`，`index.ts` 只剩聚合 import，
+ * 不能再整体求值（`new Function` 解析不了 import）。实现移到
+ * `src/i18n/flatten-keys.ts`：按 `index.ts` 的 import 顺序逐域求值合并，键清单与拆分前逐字节一致。</p>
  */
 function flattenI18nKeys(): string[] {
-    const source = readFileSync(path.resolve(__dirname, "src/i18n/index.ts"), "utf8");
-    const body = source
-        // task-1011: the locale module now exports more than `i18n` (the copy gate imports
-        // `messages`), and `new Function` bodies cannot contain `export`. Strip every import
-        // line and neutralise the `export` keyword; everything else stays byte-identical.
-        .replace(/^import[^\n]*\n/gm, "")
-        .replace(/\bexport\s+(const|let|var|function|class)\b/g, "$1");
-    const messages = new Function("createI18n", `${body}\nreturn i18n.global.messages;`)(
-        (options: { messages: Record<string, unknown> }) => ({
-            global: { messages: options.messages },
-        }),
-    ) as Record<string, unknown>;
-    const keys: string[] = [];
-    const walk = (node: unknown, prefix: string): void => {
-        if (typeof node === "string") {
-            if (prefix) keys.push(prefix);
-            return;
-        }
-        if (node && typeof node === "object") {
-            for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-                walk(value, prefix ? `${prefix}.${key}` : key);
-            }
-        }
-    };
-    // 逐 locale 展开（不能从 messages 顶层展开，否则键会带 `zh-CN.` 前缀）
-    for (const localeMessages of Object.values(messages)) walk(localeMessages, "");
-    return keys;
+    return flattenI18nKeysFromDir(path.resolve(__dirname, "src/i18n"));
 }
 
 const VIRTUAL_I18N_KEYS = "virtual:xihe-i18n-keys";
