@@ -42,7 +42,9 @@ class AgentExecPresetAtomsTest {
                 ToolFaceRegistry.ACTION_DELETE,
                 ToolFaceRegistry.ACTION_NETWORK,
                 ToolFaceRegistry.ACTION_PLUGIN_INVOKE,
-                ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE));
+                ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE,
+                // task-935 / D-1935 (V187): clone joins the agent default stack.
+                ToolFaceRegistry.ACTION_CLONE));
         // R2: the default workspace role — same removal, so the intersection cannot re-admit exec.
         table.put(SystemGrantPresetCatalog.WS_EDITOR, Set.of(
                 ToolFaceRegistry.ACTION_READ,
@@ -59,11 +61,13 @@ class AgentExecPresetAtomsTest {
         // R3: the three presets.
         table.put(SystemGrantPresetCatalog.AGENT_READER, Set.of(
                 ToolFaceRegistry.ACTION_READ,
-                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
+                ToolFaceRegistry.ACTION_CLONE));
         table.put(SystemGrantPresetCatalog.AGENT_WORKER, Set.of(
                 ToolFaceRegistry.ACTION_READ,
                 ToolFaceRegistry.ACTION_WRITE,
-                ToolFaceRegistry.ACTION_DELETE));
+                ToolFaceRegistry.ACTION_DELETE,
+                ToolFaceRegistry.ACTION_CLONE));
         table.put(SystemGrantPresetCatalog.WS_RUNNER, Set.of(
                 ToolFaceRegistry.ACTION_EXEC,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));

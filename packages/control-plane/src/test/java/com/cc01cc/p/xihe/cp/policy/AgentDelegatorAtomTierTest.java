@@ -33,6 +33,9 @@ class AgentDelegatorAtomTierTest {
 
     private static final String SPAWN_AGENT =
             com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_SPAWN_AGENT);
+    /** task-935 / D-1935: every agent preset (including the delegator) may derive a clone. */
+    private static final String CLONE =
+            com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_CLONE);
     /** 角色名用字面量：实现前 {@code SystemGrantPresetCatalog} 还没有这个常量，红测必须先能编译。 */
     private static final String AGENT_DELEGATOR = "AGENT_DELEGATOR";
 
@@ -80,8 +83,10 @@ class AgentDelegatorAtomTierTest {
         Set<String> atoms = seed.get().atoms().stream()
                 .map(SystemGrantPresetCatalog.AtomRef::actionClass)
                 .collect(Collectors.toSet());
-        assertEquals(Set.of(SPAWN_AGENT), atoms,
-                "最小原子集：只含委派本身；不得含 MANAGE_WORKSPACE_AGENTS / MANAGE_ROLES / instance:*");
+        // task-935 / D-1935 (V187): the agent preset contract adds action:clone to every agent
+        // preset, so the delegator's reviewed set is spawn + clone — still no administration atoms.
+        assertEquals(Set.of(SPAWN_AGENT, CLONE), atoms,
+                "最小原子集：委派本身 + 分身；不得含 MANAGE_WORKSPACE_AGENTS / MANAGE_ROLES / instance:*");
     }
 
     @Test

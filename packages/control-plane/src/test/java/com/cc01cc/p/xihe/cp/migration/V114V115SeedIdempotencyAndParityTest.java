@@ -108,10 +108,10 @@ class V114V115SeedIdempotencyAndParityTest {
                         + " workspace-face atoms at instance scope (V115 §2a) + 5 at workspace scope"
                         + " (V115 §2b) = 13 rows on the first replay");
         assertEquals(8, count("SELECT count(*) FROM grants WHERE subject_id = '" + subject
-                        + "' AND source = 'preset' AND scope_type = 'instance'"),
+                        + "' AND source = 'assigned' AND scope_type = 'instance'"),
                 "instance scope: N2/N3/N4 (V114) + N5–N9 (V115 §2a) = 8");
         assertEquals(5, count("SELECT count(*) FROM grants WHERE subject_id = '" + subject
-                        + "' AND source = 'preset' AND scope_type = 'workspace'"),
+                        + "' AND source = 'assigned' AND scope_type = 'workspace'"),
                 "workspace scope: WS_OWNER's five atoms (V115 §2b) = 5");
         long grantsAfterFirstReplay = count("SELECT count(*) FROM grants");
 
@@ -140,14 +140,16 @@ class V114V115SeedIdempotencyAndParityTest {
         int affected = 0;
         // Strip comments BEFORE splitting on ';': the header prose contains semicolons, and a
         // comment line that does not start with "--" after a naive split becomes a syntax error.
-        // task-832 renamed the tables at V182; replaying the V114/V115 seed text on a head-migrated
-        // database must target the current names (this is a seed-idempotency check, not a schema
-        // history replay).
+        // task-832 renamed the tables at V182; task-933/V186 converted the materialized grant source
+        // from "preset" to "assigned" and narrowed ck_grants_source to exclude "preset". Replaying
+        // the V114/V115 seed text on a head-migrated database must target the current names and the
+        // current source value (this is a seed-idempotency check, not a schema history replay); the
+        // old 'preset' spelling is rejected by V186's CHECK with 23514.
         sql = sql.replace("role_permissions", "grant_preset_atoms")
                 .replace("role_bindings", "grant_preset_bindings")
                 .replace("JOIN roles ", "JOIN grant_presets ")
                 .replace(" roles r ", " grant_presets r ")
-                .replace("'role'", "'preset'");
+                .replace("'role'", "'assigned'");
         try (Statement statement = connection.createStatement()) {
             for (String raw : stripComments(sql).split(";")) {
                 String statementSql = raw.trim();

@@ -21,7 +21,7 @@ import java.util.UUID;
  * PLAN-0610 W3-2a: the access-role definition surface (design §3.5).
  *
  * <pre>
- * GET    /api/v1/presets/catalog      46 atoms (43 action + 3 capability) with scope_class
+ * GET    /api/v1/presets/catalog      47 atoms (44 action + 3 capability) with scope_class
  * GET    /api/v1/presets              every definition (system presets first)
  * POST   /api/v1/presets              create a custom preset
  * PATCH  /api/v1/presets/{presetId}     rename / re-describe / re-atom a custom preset; system presets:

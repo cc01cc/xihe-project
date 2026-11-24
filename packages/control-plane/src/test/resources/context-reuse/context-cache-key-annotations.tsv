@@ -72,6 +72,7 @@
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/SessionWorkspaceBindingNegativeTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/UserQuestionControllerIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/UserQuestionServiceIntegrationTest.java	property-variant
+@DynamicPropertySource	com/cc01cc/p/xihe/cp/config/DefaultAgentMaterializationIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/config/FirstRunContentSeedBackfillIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/config/FirstRunContentSeedIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/config/FirstRunContentSeedOnboardingIntegrationTest.java	property-variant

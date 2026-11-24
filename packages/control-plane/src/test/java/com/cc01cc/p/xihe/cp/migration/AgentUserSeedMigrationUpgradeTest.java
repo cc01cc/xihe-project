@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Fresh side: the migrated catalog seeds are exactly right and the sibling seeded agent roles carry
  * no agent-forbidden atom. Upgrade side: the measured 40-row legacy shape (agent seed binding to
  * USER with a materialized CREATE_OWN_AGENT grant) is rebind-in-place by V127 — 40 → 40, seeds
- * preserved, the forbidden atom stripped, six atoms present (PLAN-0691 T1.3 added
+ * preserved, the forbidden atom stripped, seven atoms present (PLAN-0691 T1.3 added
  * PLUGIN_INVOKE to the base set), and human USER grants untouched. BL-312 (V147) removed the atom
  * from the catalog and seeds, so the upgrade fixture re-creates the legacy materialized rows by
  * direct insert — the migration must strip rows the current vocabulary can no longer produce.
@@ -92,9 +92,11 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // agent seed is now BASE_ATOMS minus exec (SystemGrantPresetCatalog.AGENT_BASE_ATOMS), so
         // AGENT_USER went 7 -> 6 while the human USER default is untouched. This is the assertion
         // that makes "exec is back in the agent default" fail loudly instead of silently.
-        assertEquals(6, permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.AGENT_USER_ID).size(),
-                "AGENT_USER seeds exactly the six base atoms (V172 added TEAM_TASK_MANAGE: 6 -> 7;"
-                        + " DSD-1500/V179 removed exec: 7 -> 6)");
+        // task-935 / D-1935 (V187): action:clone joins the agent default stack, so AGENT_USER's
+        // seed grows by one (6 -> 7). Human presets deliberately do not carry clone.
+        assertEquals(7, permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.AGENT_USER_ID).size(),
+                "AGENT_USER seeds exactly the seven base atoms (V172 added TEAM_TASK_MANAGE: 6 -> 7;"
+                        + " DSD-1500/V179 removed exec: 7 -> 6; task-935/V187 added clone: 6 -> 7)");
         assertEquals(0, permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.AGENT_USER_ID).stream()
                         .filter(row -> ToolFaceRegistry.ACTION_EXEC.equals(row.getId().getActionClass()))
                         .count(),
@@ -197,11 +199,13 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         assertEquals(0, forbiddenGrantCount(agentIds),
                 "the agent-forbidden grant is stripped");
         for (UUID agentId : agentIds) {
-            assertEquals(6, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
+            // AGENT_USER at HEAD carries 7 atoms: BASE_ATOMS minus exec (V179) plus clone (V187).
+            assertEquals(7, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                             + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
-                            + " AND source='preset' AND scope_type='instance'", Integer.class,
-                    agentId.toString()), "each agent materializes exactly AGENT_USER's six atoms"
-                    + " (V172 added TEAM_TASK_MANAGE: 6 -> 7; DSD-1500 R2/V179 removed exec: 7 -> 6)");
+                            + " AND source='assigned' AND scope_type='instance'", Integer.class,
+                    agentId.toString()), "each agent materializes exactly AGENT_USER's seed atoms"
+                    + " (V172 added TEAM_TASK_MANAGE; DSD-1500 R2/V179 removed exec; task-935/V187"
+                    + " added clone)");
         }
         // BL-367 处置③: no upgraded agent may hold any AGENT_FORBIDDEN_ATOMS atom. This is the
         // structural guard against a future migration re-materializing SELF (or another forbidden atom).
@@ -234,10 +238,13 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // The surrounding schema is at HEAD (V182 renamed the tables), while the replayed file is a
         // historical migration that must not be edited. Translate its legacy vocabulary here so the
         // upgrade fixture still exercises the same statements against the renamed schema.
+        // task-933/V186 converted the materialized source value from 'preset' to 'assigned' and the
+        // narrowed CHECK rejects the old spelling (23514), so the historical replay must use the
+        // post-V186 value on a head-migrated schema.
         sql = sql.replaceAll("(?i)\\b(from|join|into|update|table)\\s+roles\\b", "$1 grant_presets")
                 .replace("role_bindings", "grant_preset_bindings")
                 .replace("role_permissions", "grant_preset_atoms")
-                .replace("'role'", "'preset'");
+                .replace("'role'", "'assigned'");
         StringBuilder statement = new StringBuilder();
         for (String line : sql.split("\n")) {
             String trimmed = line.trim();
@@ -263,7 +270,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         for (UUID agentId : agentIds) {
             total += jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                     + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
-                    + " AND source='preset' AND permissions @> "
+                    + " AND source='assigned' AND permissions @> "
                     + "'[{\"actionClass\": \"action:CREATE_OWN_AGENT\"}]'::jsonb", Integer.class,
                     agentId.toString());
         }
@@ -279,7 +286,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
     private void insertLegacyForbiddenGrant(UUID agentId, UUID granterId) {
         Integer existing = jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                         + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
-                        + " AND source='preset' AND permissions @> "
+                        + " AND source='assigned' AND permissions @> "
                         + "'[{\"actionClass\": \"action:CREATE_OWN_AGENT\"}]'::jsonb",
                 Integer.class, agentId.toString());
         if (existing != null && existing > 0) {
@@ -289,7 +296,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
                         + " subject_id, permissions, source, scope_type, scope_id, read_state)"
                         + " VALUES (gen_random_uuid(), 'user', CAST(? AS UUID), 'agent_principal',"
                         + " CAST(? AS UUID), '[{\"actionClass\": \"action:CREATE_OWN_AGENT\"}]'::jsonb,"
-                        + " 'preset', 'instance', NULL, 'read')",
+                        + " 'assigned', 'instance', NULL, 'read')",
                 granterId.toString(), agentId.toString());
     }
 

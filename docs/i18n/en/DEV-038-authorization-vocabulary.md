@@ -7,7 +7,7 @@ sidebar_group: "Developer Guide"
 status: active
 created: 2026-11-22
 updated: 2026-11-22
-description: A four-layer typology of XH authorization vocabulary: 42 action atoms, 3 capability atoms, 11 built-in grant presets and the resource families. Each layer states what it is, where to read it, whether evaluation reads it, and why it is designed that way; ORG_LEADER is marked comment-only with no seed.
+description: A four-layer typology of XH authorization vocabulary: 44 action atoms, 3 capability atoms, 11 built-in grant presets and the resource families. Each layer states what it is, where to read it, whether evaluation reads it, and why it is designed that way; ORG_LEADER is marked comment-only with no seed.
 tags:
   - authz
   - policy
@@ -65,7 +65,7 @@ In one sentence: **evaluation reads action atoms, capability atoms (entry gate) 
 
 | Preset | Action/capability atoms | Domain | Notes |
 |---|---:|---|---|
-| `SUPER_ADMIN` | 45 | Instance | All 42 action atoms + 3 capability atoms |
+| `SUPER_ADMIN` | 47 | Instance | All 44 action atoms + 3 capability atoms |
 | `ADMIN` | 32 | Instance | User default set + credential management + instance management |
 | `USER` | 10 | Instance | Registration default set |
 | `WS_OWNER` | 17 | Workspace | Workspace management and editing |
