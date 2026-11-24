@@ -129,6 +129,17 @@ const props = withDefaults(
         advisorKinds?: string[];
         /** 钩子 `on` 的**白名单**集合（快照源：CP `HookAdvisorRegistry.ALLOWED_ACTION_CLASSES`）。 */
         advisorEvents?: string[];
+        /**
+         * task-994: render the instance-scope「允许执行」switch. Only the instance panel turns this on —
+         * execution reach is an instance-layer fact (`WS_RUNNER` at instance scope), and the other two
+         * layers would show a switch that writes into a scope they do not own.
+         */
+        execToggle?: boolean;
+        /**
+         * task-994: whether the caller may flip that switch. `false` = disabled with the atom reason;
+         * the judgment is `MANAGE_AGENT_PRINCIPALS` (the panel's double gate), never a role check.
+         */
+        execToggleEditable?: boolean;
     }>(),
     {
         workspaceId: null,
@@ -141,6 +152,8 @@ const props = withDefaults(
         // （vue 编译期硬约束，BaseModal 那类双 script 块才解决）。这两个字面量就是上面注释里的 CP 快照。
         advisorKinds: () => ["guard"] as string[],
         advisorEvents: () => ["approval.ask"] as string[],
+        execToggle: false,
+        execToggleEditable: false,
     },
 );
 
@@ -232,6 +245,10 @@ const delegationSaving = ref(false);
 const memorySaving = ref(false);
 const hooksSaving = ref(false);
 
+/** task-994: instance exec switch state (declared here so {@link resetDrafts} can clear it). */
+const execBusy = ref(false);
+const execError = ref<ErrorPresentation | null>(null);
+
 function isPlainRecord(raw: unknown): raw is Record<string, unknown> {
     return typeof raw === "object" && raw !== null && !Array.isArray(raw);
 }
@@ -282,6 +299,7 @@ function resetDrafts() {
     sectionErrors.memory = null;
     sectionErrors.hooks = null;
     disableError.value = null;
+    execError.value = null;
 }
 
 // 打开或切换目标时重置工作副本；await 后回填一律走守卫（vue skill 硬约束：抽屉可能已被关掉）。
@@ -327,6 +345,77 @@ async function loadRoles() {
         }
     } finally {
         rolesLoading.value = false;
+    }
+}
+
+// ---- 执行权限（task-994，实例层） ----------------------------------------------------------
+//
+// 判据：执行 = 实例层 reach（WS_RUNNER，instance scope）+ 工作区层 cap 两级授权（task-987）。
+// 这里只读/写**实例层那一半**；工作区侧仍由各自快照生效，所以文案必须写明，不做「一开就全开」
+// 的暗示。行的可删性由 CP 决定（seed=false 才允许解绑），UI 不预判。
+const WS_RUNNER_ROLE_NAME = "WS_RUNNER";
+/** CP's fixed system-preset id (V179); the fallback when the role list has no row to read it from. */
+const WS_RUNNER_PRESET_ID = "00000000-0000-4000-8000-000000000011";
+
+/** 实例档 WS_RUNNER 绑定（存在 = 已授予实例层运行通道）；工作区档同角色不算。 */
+const execBinding = computed<AgentRoleBinding | null>(
+    () =>
+        roles.value?.find(
+            (role) =>
+                role.scopeType === "instance" &&
+                (role.name || "").toUpperCase() === WS_RUNNER_ROLE_NAME,
+        ) ?? null,
+);
+const execGranted = computed(() => execBinding.value !== null);
+
+/**
+ * 开关可点条件：宿主声明该层可渲染 + 写门通过（`MANAGE_AGENT_PRINCIPALS` 双门镜像）+ 读面已到齐。
+ * 读面未回时禁用但**不**说「没权限」——那是「还不知道」。
+ */
+const execSwitchDisabled = computed(
+    () =>
+        !props.execToggle ||
+        !props.execToggleEditable ||
+        execBusy.value ||
+        rolesLoading.value ||
+        roles.value === null,
+);
+
+async function setExecGrant(enabled: boolean) {
+    const principalId = props.principal?.principalId;
+    if (!principalId || execBusy.value) return;
+    if (!props.execToggleEditable) return;
+    if (enabled === execGranted.value) return;
+    execBusy.value = true;
+    execError.value = null;
+    try {
+        if (enabled) {
+            await api.bindAgentRole(
+                props.workspaceId,
+                principalId,
+                // 实例档绑定用 preset id；已知角色名时优先匹配，回退到 CP 的固定 WS_RUNNER id。
+                roles.value?.find((role) => (role.name || "").toUpperCase() === WS_RUNNER_ROLE_NAME)
+                    ?.roleId ?? WS_RUNNER_PRESET_ID,
+            );
+        } else {
+            const binding = execBinding.value;
+            if (!binding) return;
+            await api.unbindAgentRole(props.workspaceId, principalId, binding.bindingId);
+        }
+        // 写后重取：状态只认 CP 回包，不本地翻转。
+        await loadRoles();
+        if (props.open && props.principal?.principalId === principalId) {
+            toast.success(t(K + (enabled ? "execEnabled" : "execDisabled")));
+        }
+    } catch (cause) {
+        const failure = presentCauseError(t, cause, t(K + "execFailed"));
+        if (props.open && props.principal?.principalId === principalId) {
+            execError.value = failure;
+        }
+        // 失败可能已部分生效（先绑后解不适用此处，但 CP 可能已写）；重读取真值。
+        await loadRoles().catch(() => undefined);
+    } finally {
+        execBusy.value = false;
     }
 }
 
@@ -1325,6 +1414,50 @@ function discardAndClose() {
                             </p>
                         </li>
                     </ul>
+                    <!-- task-994：执行权限（实例层 WS_RUNNER）。折进本组而不是新开一节 ——
+                         ln F4 只允许 6 个顶级语义组；执行权限本来就是「一个角色绑定」的读写，
+                         判据与上面的角色列表同源（roles 读面）。 -->
+                    <div
+                        v-if="execToggle"
+                        class="space-y-2 border-t border-border pt-2"
+                        data-testid="apd-exec"
+                    >
+                        <h4 class="text-sm font-medium text-muted-foreground">
+                            {{ t(K + "sectionExec") }}
+                        </h4>
+                        <p class="text-xs leading-5 text-muted-foreground">
+                            {{ t(K + "execHint") }}
+                        </p>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <Switch
+                                :model-value="execGranted"
+                                :disabled="execSwitchDisabled"
+                                data-testid="apd-exec-switch"
+                                :aria-label="t(K + 'execToggleLabel')"
+                                @update:model-value="setExecGrant"
+                            />
+                            <span class="text-sm">{{ t(K + "execToggleLabel") }}</span>
+                            <span
+                                v-if="!execToggleEditable"
+                                class="text-xs text-muted-foreground"
+                                data-testid="apd-exec-denied"
+                            >
+                                {{ t(K + "execRequiresAtom") }}
+                            </span>
+                            <span
+                                v-else-if="execBusy"
+                                class="text-xs text-muted-foreground"
+                                data-testid="apd-exec-saving"
+                            >
+                                {{ t(K + "saving") }}
+                            </span>
+                        </div>
+                        <ErrorBlock
+                            v-if="execError"
+                            :presentation="execError"
+                            testid="apd-exec-error"
+                        />
+                    </div>
                 </section>
                 <!-- 危险区：只有宿主没有自己 disable 入口时才渲染（user 层）。
                      task-151 ④：这一块不是语义分区，是页脚动作区 —— 用 div 承接，

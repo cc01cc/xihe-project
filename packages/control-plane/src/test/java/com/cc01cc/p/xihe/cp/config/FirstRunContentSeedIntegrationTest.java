@@ -6,9 +6,13 @@ import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.PathKey;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.provider.ProviderCatalogService;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
@@ -103,6 +107,15 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
     /** task-932: the seeder now writes the instance default agent set through the real config face. */
     @Autowired
     private com.cc01cc.p.xihe.cp.config.ConfigService configService;
+    /** task-994: the instance exec grant writes one binding row and materializes it in transaction. */
+    @Autowired
+    private GrantPresetBindingRepository presetBindings;
+    @Autowired
+    private GrantPresetRepository presets;
+    @Autowired
+    private PresetGrantMaterializer grantMaterializer;
+    @Autowired
+    private AuditLogger audit;
     @Autowired
     private JdbcTemplate jdbc;
 
@@ -151,6 +164,25 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, countWhere("provider_connections", "provider_id = 'ollama'"),
                 "a fresh install must not seed the retired single Ollama default");
         assertEquals(3, count("agent_principals"), "Lead + WorkerA + WorkerB");
+        // task-994: a fresh install grants instance-scope WS_RUNNER (exec reach) to the Lead only.
+        // This is the DB reading behind the "default surface stays minimal" ruling — Workers must
+        // not be executable by default, and the row must be deletable (is_seed=false).
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM grant_preset_bindings b"
+                + " JOIN grant_presets r ON r.id = b.role_id"
+                + " WHERE b.subject_type = 'agent_principal' AND b.scope_type = 'instance'"
+                + " AND r.name = 'WS_RUNNER'", Integer.class),
+                "exactly one instance exec grant after the first run");
+        assertEquals(List.of("Lead"), jdbc.queryForList("SELECT p.name FROM grant_preset_bindings b"
+                + " JOIN grant_presets r ON r.id = b.role_id"
+                + " JOIN agent_principals p ON p.id = b.subject_id"
+                + " WHERE b.subject_type = 'agent_principal' AND b.scope_type = 'instance'"
+                + " AND r.name = 'WS_RUNNER' ORDER BY 1", String.class),
+                "the Lead is the only seeded subject with exec reach");
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM grant_preset_bindings b"
+                + " JOIN grant_presets r ON r.id = b.role_id"
+                + " WHERE b.subject_type = 'agent_principal' AND b.scope_type = 'instance'"
+                + " AND r.name = 'WS_RUNNER' AND b.is_seed = TRUE", Integer.class),
+                "the exec grant must be reversible: the instance-admin switch owns it, so is_seed=false");
         assertEquals(3, count("org_units"), "the content seed adds no org unit of its own");
         assertEquals(4, count("org_unit_members"), "the admin in the root plus the three subjects");
         assertEquals(headBeforeContentSeed, appliedMigrationHead(),
@@ -333,7 +365,8 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
                 providerConnections, agentPrincipalService, agentPrincipals, orgUnits, orgUnitMembers,
                 instanceIdentity, instanceOwnership, environment,
                 "jdbc:postgresql://127.0.0.1:1/xihe-unused-only-for-the-postgres-predicate", mode,
-                workspaceRoot.toString(), providerCatalog, configService);
+                workspaceRoot.toString(), providerCatalog, configService,
+                presetBindings, presets, grantMaterializer, audit);
     }
 
     private int count(String table) {

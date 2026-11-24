@@ -2,9 +2,13 @@ package com.cc01cc.p.xihe.cp.config;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
 import com.cc01cc.p.xihe.cp.provider.ProviderCatalogService;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
@@ -93,6 +97,15 @@ class FirstRunContentSeedBackfillIntegrationTest extends AbstractIntegrationTest
     /** task-932: the seeder now writes the instance default agent set through the real config face. */
     @Autowired
     private ConfigService configService;
+    /** task-994: the instance exec grant writes one binding row and materializes it in transaction. */
+    @Autowired
+    private GrantPresetBindingRepository presetBindings;
+    @Autowired
+    private GrantPresetRepository presets;
+    @Autowired
+    private PresetGrantMaterializer grantMaterializer;
+    @Autowired
+    private AuditLogger audit;
     @Autowired
     private JdbcTemplate jdbc;
 
@@ -153,7 +166,8 @@ class FirstRunContentSeedBackfillIntegrationTest extends AbstractIntegrationTest
                 providerConnections, agentPrincipalService, agentPrincipals, orgUnits, orgUnitMembers,
                 instanceIdentity, instanceOwnership, environment,
                 "jdbc:postgresql://127.0.0.1:1/xihe-unused-only-for-the-postgres-predicate", mode,
-                workspaceRoot.toString(), providerCatalog, configService);
+                workspaceRoot.toString(), providerCatalog, configService,
+                presetBindings, presets, grantMaterializer, audit);
     }
 
     private int count(String table) {

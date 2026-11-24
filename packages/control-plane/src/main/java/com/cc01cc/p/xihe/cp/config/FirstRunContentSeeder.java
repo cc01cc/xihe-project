@@ -1,12 +1,20 @@
 package com.cc01cc.p.xihe.cp.config;
 
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.provider.ProviderCatalogService;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
@@ -26,6 +34,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.List;
@@ -98,6 +107,19 @@ public class FirstRunContentSeeder {
 
     static final String LEAD_NAME = "Lead";
     static final List<String> WORKER_NAMES = List.of("WorkerA", "WorkerB");
+
+    /**
+     * task-994 (user ruling 2026-11-24, option A): a fresh install grants instance-scope
+     * {@code WS_RUNNER} to the <b>Lead</b> subject only. Execution is a two-level authorization —
+     * instance reach ({@code WS_RUNNER}) plus the workspace cap — so without this binding a
+     * freshly seeded Lead can never run a command (task-987 / DSD-1500). Workers keep the
+     * minimum surface: they are deliberately <b>not</b> granted exec.
+     */
+    static final UUID WS_RUNNER_ID = SystemGrantPresetCatalog.WS_RUNNER_ID;
+
+    /** Audit action of the seeded exec grant (same vocabulary the runtime binding API writes). */
+    static final String AUDIT_EXEC_SEED = "agent_principal_role_bind";
+    static final String AUDIT_RESOURCE_ROLE_BINDING = "role_binding";
 
     /** The three sentinel ids {@code V181} inserts; the placement below must not invent its own. */
     static final UUID LEADERS_UNIT_ID = UUID.fromString("00000000-0000-4000-8000-0000000000e2");
@@ -187,6 +209,11 @@ public class FirstRunContentSeeder {
     private final ProviderCatalogService providerCatalog;
     /** task-932: the writer of the instance-level default agent set. */
     private final ConfigService configService;
+    /** task-994: instance-scope exec grant (Lead only) and its materialization. */
+    private final GrantPresetBindingRepository presetBindings;
+    private final GrantPresetRepository presets;
+    private final PresetGrantMaterializer grantMaterializer;
+    private final AuditLogger audit;
 
     private final boolean postgres;
     private final String seedContent;
@@ -213,7 +240,11 @@ public class FirstRunContentSeeder {
                                  @Value("${cp.bootstrap.seed-content:auto}") String seedContent,
                                  @Value("${cp.bootstrap.seed-workspace-root:}") String seedWorkspaceRoot,
                                  ProviderCatalogService providerCatalog,
-                                 ConfigService configService) {
+                                 ConfigService configService,
+                                 GrantPresetBindingRepository presetBindings,
+                                 GrantPresetRepository presets,
+                                 PresetGrantMaterializer grantMaterializer,
+                                 AuditLogger audit) {
         this.workspaceService = workspaceService;
         this.workspaces = workspaces;
         this.providerConnectionService = providerConnectionService;
@@ -233,6 +264,10 @@ public class FirstRunContentSeeder {
         this.seedContent = seedContent;
         this.seedWorkspaceRoot = seedWorkspaceRoot;
         this.configService = configService;
+        this.presetBindings = presetBindings;
+        this.presets = presets;
+        this.grantMaterializer = grantMaterializer;
+        this.audit = audit;
     }
 
     /** Warnings of the most recent {@link #seed(User)} call; empty when everything landed. */
@@ -274,6 +309,7 @@ public class FirstRunContentSeeder {
         try {
             ProviderConnection connection = seedConnections();
             seedSubjects(admin, connection);
+            seedExecGrant(admin);
             // task-932 order matters: the default agent set NAMES the seeded subjects, so it can only be
             // written after they exist, and the seeded workspace must be created after it so that the
             // ordinary workspace-creation path materializes it. The seed deliberately does not write
@@ -492,6 +528,74 @@ public class FirstRunContentSeeder {
             }
             orgUnitMembers.place(AGENT_MEMBER_KIND, subject.getId(), unitId);
         }
+    }
+
+    /**
+     * task-994: instance-scope {@code WS_RUNNER} for the Lead subject only.
+     *
+     * <h3>Why a direct row + materializer instead of the binding API</h3>
+     * <p>{@code AgentPrincipalPresetBindingService.bind} is the runtime, caller-gated path
+     * ({@link com.cc01cc.p.xihe.cp.policy.GrantabilityGuard} needs an authenticated requester).
+     * The seed runs before any request exists, so it writes the row the same way
+     * {@code AgentPrincipalService.bindInstanceRoles} writes creation-time defaults — one binding
+     * row plus an in-transaction materialization — and records a durable audit row under the seed
+     * admin. This is not a second authorization rule: the atom set still comes from the preset row
+     * ({@code V179} WS_RUNNER = exec + USE_WORKSPACE_RUNTIME).
+     *
+     * <h3>Deletable on purpose</h3>
+     * <p>{@code seed=false}: the instance administrator must be able to turn execution off from
+     * the agent detail switch (that is the whole point of task-994 A). A {@code seed=true} row
+     * would be refused by {@code ROLE_BINDING_IMMUTABLE}.
+     *
+     * <h3>Idempotency</h3>
+     * <p>Keyed on the existing instance-scope binding of that role for the Lead principal — a
+     * second start (or the seeded-admin lane running after the onboarding lane) inserts nothing,
+     * and an operator's later unbind stays unbound.
+     */
+    void seedExecGrant(User admin) {
+        AgentPrincipal lead = null;
+        for (AgentPrincipal candidate : agentPrincipals.findByCreatedByUserId(admin.getId().toString())) {
+            if (LEAD_NAME.equals(candidate.getName())) {
+                lead = candidate;
+                break;
+            }
+        }
+        if (lead == null) {
+            warn("seed-content: skipped the Lead exec grant -- no subject named '" + LEAD_NAME + "' was found");
+            return;
+        }
+        if (presets.findById(WS_RUNNER_ID).isEmpty()) {
+            // Before the write: the materializer reads the preset's atoms, and a missing preset row
+            // means V179 has not reached this database. A write here would only leave a binding
+            // that materializes nothing.
+            warn("seed-content: skipped the Lead exec grant -- preset WS_RUNNER (" + WS_RUNNER_ID
+                    + ") is missing; has V179 run on this database?");
+            return;
+        }
+        boolean alreadyBound = presetBindings
+                .findBySubjectTypeAndSubjectIdAndScopeType(
+                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, lead.getId(), AccessScope.INSTANCE)
+                .stream()
+                .anyMatch(row -> WS_RUNNER_ID.equals(row.getRoleId()));
+        if (alreadyBound) {
+            return;
+        }
+        GrantPresetBinding row = new GrantPresetBinding(WS_RUNNER_ID,
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, lead.getId(), AccessScope.INSTANCE, null,
+                admin.getId());
+        row.setId(UUID.randomUUID());
+        row.setGrantedAt(Instant.now());
+        // Deletable: the instance admin's switch owns the row from now on (see javadoc).
+        row.setSeed(false);
+        GrantPresetBinding saved = presetBindings.saveAndFlush(row);
+        grantMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, lead.getId(),
+                admin.getId(), null);
+        audit.recordDurableChange(admin.getId().toString(), null, AUDIT_EXEC_SEED,
+                AUDIT_RESOURCE_ROLE_BINDING, saved.getId().toString(),
+                "{\"roleId\":\"" + WS_RUNNER_ID + "\",\"bindingId\":\"" + saved.getId()
+                        + "\",\"principalId\":\"" + lead.getId() + "\",\"result\":\"bound\",\"source\":\"first-run-seed\"}");
+        logger.info("seed-content: granted instance WS_RUNNER exec reach to Lead principalId={} bindingId={}",
+                lead.getId(), saved.getId());
     }
 
     /**

@@ -869,6 +869,8 @@ async function confirmDelete(): Promise<void> {
         :principal="detailPrincipal"
         :workspace-id="null"
         :editable-sections="['persona', 'model', 'delegation', 'hooks']"
+        :exec-toggle="true"
+        :exec-toggle-editable="canWrite"
         @changed="onDetailChanged"
     />
 </template>
