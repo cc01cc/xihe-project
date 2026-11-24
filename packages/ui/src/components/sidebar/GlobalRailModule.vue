@@ -55,7 +55,7 @@ function isItemActive(path: string) {
 
 <template>
     <SidebarMenuItem>
-        <div class="relative">
+        <div class="relative flex items-center">
             <!--
                 task-30（ui-2 自审 batch-1，四页复现的 P0）：折叠态（`collapsible=icon`）下标签
                 `<span>` 是 `display:none` ⇒ 这一排 28×28 的 icon-only 按钮**没有可访问名**
@@ -70,7 +70,7 @@ function isItemActive(path: string) {
                 :is-active="active"
                 :aria-current="active ? 'page' : undefined"
                 :aria-label="t(module.labelKey)"
-                class="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
+                class="min-w-0 flex-1 basis-0 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
                 @click="emit('navigate', module.path)"
             >
                 <component :is="module.icon" class="size-4 shrink-0" aria-hidden="true" />
@@ -96,16 +96,36 @@ function isItemActive(path: string) {
                 reka 默认的模态语义（焦点陷阱与外部指针屏蔽都回来了）。上面的分析留作下一次
                 「想用指针维持浮层」时的前车之鉴，不要因为它已不可达就删掉。
             -->
+            <!--
+                task-1012（点击被吞，根因 ①）：`modal=false`。
+
+                reka 的 `DropdownMenu` 默认 **modal**：菜单打开时把文档其余部分标成
+                `pointer-events: none`。于是「菜单开着 → 点另一个 rail 按钮」的**第一次**点击
+                只被当成「关闭菜单」吞掉（实测 10/10 URL 不变，第二次点击才生效）。
+                这里改成非模态：外部 pointerdown 仍会关菜单，但事件继续传到目标按钮，
+                一次点击 = 关菜单 + 导航，不再要求用户点第二次。
+
+                这不是 `setTimeout`/重试掩盖 —— 去掉的是「模态层替用户吃掉点击」这条因果。
+            -->
             <DropdownMenu
                 :open="open"
+                :modal="false"
                 @update:open="(value: boolean) => emit('update:open', value)"
             >
                 <DropdownMenuTrigger as-child>
+                    <!--
+                        task-1012（点击被吞，根因 ②）：chevron 不再叠在导航按钮上。
+
+                        旧实现用 `absolute right-1 top-1/2`，28×28 的触发器压在整行按钮的
+                        右端 —— 展开态点「设置」行的右侧 14px 实测 10/10 打开二级菜单而**不导航**
+                        （用户读作「点了没反应」，URL/AX 都没变）。现在按钮 `flex-1 basis-0`
+                        只吃到自己的列宽，chevron 是独立的一列（28px），两个命中区不再重叠。
+                    -->
                     <button
                         type="button"
                         :data-testid="`global-rail-menu-${module.id}`"
                         :aria-label="t('sidebar.moduleMenu')"
-                        class="rail-module-menu absolute top-1/2 right-1 flex min-h-7 min-w-7 -translate-y-1/2 items-center justify-center rounded-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:sr-only"
+                        class="rail-module-menu flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:sr-only"
                     >
                         <ChevronRight class="size-3.5" aria-hidden="true" />
                     </button>
