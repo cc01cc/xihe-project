@@ -11,6 +11,7 @@ overrides:
   fast-uri@^3.0.1: 3.1.9
   hono@4.13.4: 4.13.8
   qs@6.15.3: 6.16.0
+  serialize-javascript@^7.0.3: 7.1.3
   source-map-js@1.2.1: 1.2.2
 
 patchedDependencies:
@@ -3404,8 +3405,8 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
-  serialize-javascript@7.1.2:
-    resolution: {integrity: sha512-GL2BWwVa6JydKO6l/ljVgjAZF4QJ3S7dWDWi53s5GZT8PJzD2fNxi67HANQGKAqPrwEpL5ba7gUBGi0Ls/sEoQ==}
+  serialize-javascript@7.1.3:
+    resolution: {integrity: sha512-kYEnegpAxWFjUw3dSYdSM9zVlTrsxDbsSkq/qd3B7VanqyJ+JdDy6qVyuqVGBhSfuD/rLZQEKuXsO5KZFCrVYQ==}
     engines: {node: '>=20.0.0'}
 
   set-cookie-parser@3.1.2:
@@ -5393,7 +5394,7 @@ snapshots:
 
   '@rollup/plugin-terser@1.0.0(rollup@4.64.0)':
     dependencies:
-      serialize-javascript: 7.1.2
+      serialize-javascript: 7.1.3
       smob: 1.6.2
       terser: 5.51.2
     optionalDependencies:
@@ -7378,7 +7379,7 @@ snapshots:
 
   semver@7.8.5: {}
 
-  serialize-javascript@7.1.2: {}
+  serialize-javascript@7.1.3: {}
 
   set-cookie-parser@3.1.2: {}
 
