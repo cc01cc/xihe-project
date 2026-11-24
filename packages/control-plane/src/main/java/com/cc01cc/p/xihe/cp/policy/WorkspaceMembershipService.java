@@ -41,12 +41,13 @@ import java.util.UUID;
  *       scope_id=<workspace>)} with the system roles {@code WS_OWNER} / {@code WS_EDITOR} /
  *       {@code WS_VIEWER} (V87 seeds, V88 backfilled from {@code workspace_users.role}).</li>
  *   <li><b>Writes</b> go to the binding only, then materialize the subject in the same transaction
- *       ({@link PresetGrantMaterializer#materializeSubject}: {@code source='preset'} rows reconciled,
- *       capability cache invalidated immediately and after completion). <b>No epoch bump</b>: a
- *       workspace role is not carried by the access token (only instance tier bindings need the I4
- *       epoch, because the token used to carry the instance role claim), and bumping here would
- *       invalidate the actor's own token on every membership edit — including the workspace they
- *       just created.</li>
+ *       ({@link PresetGrantMaterializer#materializeSubject}: {@code source='assigned'} rows reconciled,
+ *       the current import value since V186/task-933; the older {@code source='preset'} is a
+ *       historical value only; capability cache invalidated immediately and after completion).
+ *       <b>No epoch bump</b>: a workspace role is not carried by the access token (only instance
+ *       tier bindings need the I4 epoch, because the token used to carry the instance role claim),
+ *       and bumping here would invalidate the actor's own token on every membership edit —
+ *       including the workspace they just created.</li>
  * </ul>
  *
  * <p>PLAN-0610 W4b (V89): the transitional {@code workspace_users} mirror and read fallback are

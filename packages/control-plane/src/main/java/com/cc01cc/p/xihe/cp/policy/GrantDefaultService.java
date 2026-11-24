@@ -302,7 +302,9 @@ public class GrantDefaultService {
      * ({@code InstanceOwnershipService#transfer}) holds the {@code instance_owner} singleton lock
      * first, so the frozen lock order {@code instance_owner → users} is preserved: this method only
      * takes the two user row locks, in ascending id order (round-4 P1-1 ABBA rule), and then writes
-     * bindings, reconciles {@code source='preset'} atoms and bumps both epochs.</p>
+     * bindings, reconciles {@code source='assigned'} atoms (the current import value since
+     * V186/task-933; the older {@code source='preset'} is a historical value only) and bumps both
+     * epochs.</p>
      *
      * <p>Guard: the post-state must still hold at least one ACTIVE super administrator (I5). The
      * incoming owner is ACTIVE (checked by the caller) so the count is 1 by construction; the
