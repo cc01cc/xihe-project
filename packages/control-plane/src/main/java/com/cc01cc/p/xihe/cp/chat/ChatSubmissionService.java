@@ -32,12 +32,17 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -110,6 +115,14 @@ public class ChatSubmissionService {
     private final ChatModelResolutionService modelResolution;
     // D-1866 (task-24): rule-based session naming (no model call) at first user message.
     private final SessionTitleDeriver sessionTitleDeriver;
+    /**
+     * task-931 (D-1934 / R65): the user Message must land in its own transaction. The admission
+     * transaction is then free to roll back on a downstream failure without taking the user's
+     * input with it. Programmatic transactions (not self-invocation) keep the isolation explicit:
+     * each REQUIRES_NEW block below commits before the next one starts, so no Session row lock
+     * from admission can deadlock the independent Message insert.
+     */
+    private final TransactionTemplate traceTransaction;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  InboxRepository inboxRepository,
@@ -135,7 +148,8 @@ public class ChatSubmissionService {
                                  SessionRunConcurrencyGate runConcurrencyGate,
                                  com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService pluginCatalogSnapshots,
                                  ChatModelResolutionService modelResolution,
-                                 SessionTitleDeriver sessionTitleDeriver) {
+                                 SessionTitleDeriver sessionTitleDeriver,
+                                 PlatformTransactionManager transactionManager) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
@@ -165,9 +179,10 @@ public class ChatSubmissionService {
         this.pluginCatalogSnapshots = pluginCatalogSnapshots;
         this.modelResolution = modelResolution;
         this.sessionTitleDeriver = sessionTitleDeriver;
+        this.traceTransaction = new TransactionTemplate(transactionManager);
+        this.traceTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    @Transactional
     public Submission create(String runId, String sessionId, String userId, String workspaceId,
                              String branchId, String idempotencyKey, String requestHash, String provider,
                              String model, String toolMode, String providerConnectionId,
@@ -178,7 +193,6 @@ public class ChatSubmissionService {
                 leaseOwner, requestId, content, attachmentsJson, attachmentIds, null);
     }
 
-    @Transactional
     public Submission create(String runId, String sessionId, String userId, String workspaceId,
             String branchId, String idempotencyKey, String requestHash,
             String provider, String model, String toolMode, String providerConnectionId,
@@ -195,28 +209,77 @@ public class ChatSubmissionService {
      * participant ids as JSON) written onto the user Message. {@code deliveryJson == null} keeps the
      * pre-V120 shape (no delivery record) for every non-composer caller.
      */
-    @Transactional
     public Submission create(String runId, String sessionId, String userId, String workspaceId,
             String branchId, String idempotencyKey, String requestHash,
             String provider, String model, String toolMode, String providerConnectionId,
             Long connectionRevision, String leaseOwner, String requestId,
             String content, String attachmentsJson, List<String> attachmentIds,
             String asParticipantId, String deliveryJson) {
-        Submission submission = persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
-                branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
-                connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                false, Message.VISIBILITY_USER, deliveryJson);
-        // R1 (PLAN-0623): record who answered. `asParticipantId` wins (already authorized by the
-        // controller); otherwise the PRIMARY participant answers; a Session with neither keeps NULL —
-        // the same "never invent a responder" rule the V92 backfill follows.
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            // Callers that already own a transaction (the integration suite's rollback contract,
+            // and any future in-process caller) keep the pre-R65 "one transaction" semantics:
+            // the Run, the Message and the Inbox claim all roll back together with their caller.
+            // The independent trace only applies to the request-thread path, which has no outer
+            // transaction to belong to.
+            Submission submission = persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId,
+                    workspaceId, branchId, idempotencyKey, requestHash, provider, model, toolMode,
+                    providerConnectionId, connectionRevision, leaseOwner, requestId, content,
+                    attachmentsJson, attachmentIds, false, Message.VISIBILITY_USER, deliveryJson,
+                    null, null);
+            return narrowToResponder(submission, sessionId, asParticipantId);
+        }
+        // task-931 (D-1934 / R65): three independent transactions, in a fixed order.
+        //
+        // 1. preflight — every refusal gate (owner/principal/binding, delete, follow-up queue,
+        //    run cap, branch) runs in its own transaction so a refused submission still writes
+        //    nothing. The existing row-lock is released before step 2, which is what lets step 2
+        //    insert the Message in a *different* transaction (an FK check cannot wait on a lock
+        //    held by an unfinished admission).
+        // 2. trace — the user Message lands and commits on its own, before any model resolution
+        //    or Run insert. This is the durability D-1934 asks for.
+        // 3. admission — the existing atomic ChatRun + Message-link transaction. A downstream
+        //    failure (e.g. LLM_NOT_CONFIGURED from ChatModelResolutionService) rolls this back,
+        //    but step 2 is already committed; the failure then gets its own terminal Run row so
+        //    the conversation can say what happened after a reload.
+        Preflight preflight = inNewTransaction(() ->
+                preflight(sessionId, userId, workspaceId, branchId, false, idempotencyKey));
+        Message userMessage = inNewTransaction(() ->
+                persistUserMessage(sessionId, userId, workspaceId, preflight.branchId(),
+                        content, attachmentsJson, attachmentIds, Message.VISIBILITY_USER, deliveryJson));
+
+        try {
+            return inNewTransaction(() -> {
+                Submission submission = persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId,
+                        workspaceId, branchId, idempotencyKey, requestHash, provider, model, toolMode,
+                        providerConnectionId, connectionRevision, leaseOwner, requestId, content,
+                        attachmentsJson, attachmentIds, false, Message.VISIBILITY_USER, deliveryJson,
+                        preflight.branchId(), userMessage);
+                return narrowToResponder(submission, sessionId, asParticipantId);
+            });
+        } catch (RuntimeException failure) {
+            recordFailedSubmission(runId, sessionId, userId, workspaceId, preflight.branchId(),
+                    idempotencyKey, requestHash, provider, model, toolMode,
+                    userMessage.getId().toString(), failure);
+            throw failure;
+        }
+    }
+
+    /**
+     * R1 (PLAN-0623): record who answered. `asParticipantId` wins (already authorized by the
+     * controller); otherwise the PRIMARY participant answers; a Session with neither keeps NULL —
+     * the same "never invent a responder" rule the V92 backfill follows.
+     *
+     * <p>`chat_runs.agent_principal_id` carries a FK to agent_principals (V92), so only an AGENT
+     * responder can be recorded here. Persist has already stamped the admission responder (the
+     * session_participants PRIMARY row — BL-280); the main submission narrows that stamp to the
+     * actual responder, and a HUMAN responder <b>clears</b> it — the human id can never be stored,
+     * and leaving the agent stamp would misname who answered (the PLAN-0669 participant
+     * attribution carries the human).</p>
+     */
+    private Submission narrowToResponder(Submission submission, String sessionId,
+                                         String asParticipantId) {
         SessionParticipantService.Responder responder = sessionParticipantService.responderFor(
                 UUID.fromString(sessionId), asParticipantId);
-        // `chat_runs.agent_principal_id` carries a FK to agent_principals (V92), so only an AGENT
-        // responder can be recorded here. Persist has already stamped the admission responder (the
-        // session_participants PRIMARY row — BL-280); the main submission narrows that stamp to the
-        // actual responder, and a HUMAN responder **clears** it — the human id can never be stored,
-        // and leaving the agent stamp would misname who answered (the PLAN-0669 participant
-        // attribution carries the human).
         if (responder != null) {
             submission.run().setAgentPrincipalId(
                     SessionParticipant.KIND_AGENT.equals(responder.principalKind())
@@ -235,7 +298,8 @@ public class ChatSubmissionService {
         return persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                true, Message.VISIBILITY_USER, null);
+                true, Message.VISIBILITY_USER, null,
+                null, null);
     }
 
     /**
@@ -271,7 +335,8 @@ public class ChatSubmissionService {
         return persist(ChatRun.ORIGIN_SCHEDULED, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                false, messageVisibility, null);
+                false, messageVisibility, null,
+                null, null);
     }
 
     /**
@@ -746,7 +811,8 @@ public class ChatSubmissionService {
                 requestHash,
                 parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
-                content, "[]", List.of(), false, Message.VISIBILITY_USER, null);
+                content, "[]", List.of(), false, Message.VISIBILITY_USER, null,
+                null, null);
         // PLAN-0464 T2.1: the waiting link lives on the child run row itself.
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
@@ -899,7 +965,8 @@ public class ChatSubmissionService {
                 parentRun.getUserId(), parentRun.getWorkspaceId(), childBranchId, idempotencyKey,
                 requestHash, parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
-                task, "[]", List.of(), false, Message.VISIBILITY_USER, null);
+                task, "[]", List.of(), false, Message.VISIBILITY_USER, null,
+                null, null);
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
         // The waiting tool-call column is a 36-char uuid string, and settlement only compares it for
@@ -1095,7 +1162,8 @@ public class ChatSubmissionService {
                                 String toolMode, String providerConnectionId, Long connectionRevision,
                                 String leaseOwner, String requestId, String content, String attachmentsJson,
                                 List<String> attachmentIds,
-                                boolean followUpAdmission, String messageVisibility, String deliveryJson) {
+                                boolean followUpAdmission, String messageVisibility, String deliveryJson,
+                                String preResolvedBranchId, Message preexistingUserMessage) {
         Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId);
         // Resolve the admission responder once: it is both the Run principal stamp and the PRIMARY
         // Agent whose declared model intent feeds runtime resolution (D42-03 step 3).
@@ -1131,12 +1199,15 @@ public class ChatSubmissionService {
                     "Follow-up queue must be drained before sending a normal Chat message");
         }
         rejectConcurrentSubmission(sessionId, userId, idempotencyKey);
-        if (requestedBranchId == null || requestedBranchId.isBlank()) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
+        String branchId = preResolvedBranchId;
+        if (branchId == null || branchId.isBlank()) {
+            if (requestedBranchId == null || requestedBranchId.isBlank()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
+            }
+            // PLAN-0410 T1.3: resolve the explicitly selected durable branch before
+            // any Run/Message row is written; a missing path aborts the transaction.
+            branchId = branchPathService.resolveVisibility(sessionId, requestedBranchId).currentBranchId();
         }
-        // PLAN-0410 T1.3: resolve the explicitly selected durable branch before
-        // any Run/Message row is written; a missing path aborts the transaction.
-        String branchId = branchPathService.resolveVisibility(sessionId, requestedBranchId).currentBranchId();
 
         ChatRun chatRun = new ChatRun(
                 runId, sessionId, userId, workspaceId, idempotencyKey, requestHash,
@@ -1193,15 +1264,27 @@ public class ChatSubmissionService {
         // this is not a hard failure — continuation NULL is pre-existing accepted semantics).
         RunPrincipalStampDiagnostics.logIfDerivedNull(logger, chatRun);
 
-        Message userMessage = new Message(sessionId, MessageRole.USER, content);
-        // PLAN-0630 M5b / D3: the wake instruction is model input, not a user-facing turn.
-        userMessage.setVisibility(messageVisibility == null ? Message.VISIBILITY_USER : messageVisibility);
-        userMessage.setRunId(runId);
-        userMessage.setBranchId(branchId);
-        userMessage.setAttachments(attachmentsJson);
-        // PLAN-0665 D3: the delivery audience is durable on the Message itself (nullable).
-        userMessage.setDelivery(deliveryJson);
-        messageRepository.save(userMessage);
+        Message userMessage = preexistingUserMessage;
+        if (userMessage == null) {
+            userMessage = new Message(sessionId, MessageRole.USER, content);
+            // PLAN-0630 M5b / D3: the wake instruction is model input, not a user-facing turn.
+            userMessage.setVisibility(messageVisibility == null ? Message.VISIBILITY_USER : messageVisibility);
+            userMessage.setRunId(runId);
+            userMessage.setBranchId(branchId);
+            userMessage.setAttachments(attachmentsJson);
+            // PLAN-0665 D3: the delivery audience is durable on the Message itself (nullable).
+            userMessage.setDelivery(deliveryJson);
+            messageRepository.save(userMessage);
+        } else {
+            // task-931: the Message already committed in its own transaction. Admission only
+            // binds it to the Run it finally admitted; a rollback leaves the row (and its old
+            // failed-run link, when this is a retry of a failed trace) untouched.
+            userMessage = messageRepository.findById(userMessage.getId())
+                    .orElseThrow(() -> new IllegalStateException("Chat user Message is missing"));
+            userMessage.setRunId(runId);
+            userMessage.setBranchId(branchId);
+            // Dirty checking flushes this bind at commit; no extra save() round-trip.
+        }
         // D-1866 (task-24): rule-based naming — the ONE funnel for every first-message origin
         // (user submission / follow-up / scheduled / spawn / delegation), inside the admission
         // transaction that already holds this Session's row lock. A manual rename therefore can
@@ -1224,6 +1307,176 @@ public class ChatSubmissionService {
                     sessionId, runId, claimedNotices);
         }
         return new Submission(chatRun, userMessage);
+    }
+
+    /** task-931: what the preflight transaction proved before the Message may be written. */
+    private record Preflight(String branchId) {}
+
+    /**
+     * task-931 (D-1934 / R65): all *refusal* gates, in their own transaction.
+     *
+     * <p>This deliberately runs before the independent Message transaction. A refused send (wrong
+     * owner, missing/disabled principal, deleting Session, undrained follow-up queue, run cap,
+     * invalid branch) must still write nothing — that contract predates R65 and is pinned by
+     * existing tests. The gate is repeated inside admission so a race between the two transactions
+     * still cannot create a Run.</p>
+     */
+    private Preflight preflight(String sessionId, String userId, String workspaceId,
+                                String requestedBranchId, boolean followUpAdmission,
+                                String idempotencyKey) {
+        Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId);
+        // A template/revision conflict is also a refusal: keep it before the Message write.
+        apiRequestTemplates.admissionSnapshot(session);
+        if (session.getDeleteRequestedAt() != null) {
+            throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
+                    "Session deletion is in progress");
+        }
+        if (!followUpAdmission && followUpItemRepository.countBySessionIdAndStatusIn(
+                sessionId, SessionFollowUpItemRepository.OUTSTANDING_STATUSES) > 0) {
+            throw new CpApiException(HttpStatus.CONFLICT, "FOLLOW_UP_QUEUE_NOT_EMPTY",
+                    "Follow-up queue must be drained before sending a normal Chat message");
+        }
+        rejectConcurrentSubmission(sessionId, userId, idempotencyKey);
+        if (requestedBranchId == null || requestedBranchId.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
+        }
+        return new Preflight(branchPathService.resolveVisibility(sessionId, requestedBranchId).currentBranchId());
+    }
+
+    /**
+     * task-931 step 2: the user Message commits on its own, before model resolution or the Run
+     * insert. A retry of the immediately preceding failed user Message reuses that row instead of
+     * inserting a second copy — "retry" must not duplicate the user's words.
+     */
+    private Message persistUserMessage(String sessionId, String userId, String workspaceId,
+                                       String branchId, String content, String attachmentsJson,
+                                       List<String> attachmentIds, String messageVisibility,
+                                       String deliveryJson) {
+        UUID sessionUuid = UUID.fromString(sessionId);
+        Session session = sessionRepository.findByIdForUpdate(sessionUuid)
+                .filter(candidate -> userId.equals(candidate.getUserId())
+                        && Objects.equals(workspaceId, candidate.getWorkspaceId())
+                        && !candidate.isArchived())
+                .orElseThrow(ChatSubmissionService::agentSessionForbidden);
+        String effectiveVisibility =
+                messageVisibility == null ? Message.VISIBILITY_USER : messageVisibility;
+        if (Message.VISIBILITY_USER.equals(effectiveVisibility)) {
+            Message retryTarget = findFailedRetryTarget(sessionId, branchId, content,
+                    attachmentsJson, deliveryJson);
+            if (retryTarget != null) {
+                chatAttachmentService.linkToMessage(attachmentIds, retryTarget.getId().toString());
+                logger.info("[LIFECYCLE] service=cp event=chat_failed_message_reused sessionId={} messageId={}",
+                        sessionId, retryTarget.getId());
+                return retryTarget;
+            }
+        }
+        Message userMessage = new Message(sessionId, MessageRole.USER, content);
+        userMessage.setVisibility(effectiveVisibility);
+        userMessage.setBranchId(branchId);
+        userMessage.setAttachments(attachmentsJson);
+        userMessage.setDelivery(deliveryJson);
+        // No run_id yet: the Message is durable even if the Run never becomes admissible. The
+        // successful admission (or the failed trace) links it below.
+        messageRepository.save(userMessage);
+        if (Message.VISIBILITY_USER.equals(effectiveVisibility)) {
+            sessionTitleDeriver.applyToFirstMessage(session, content);
+        }
+        chatAttachmentService.linkToMessage(attachmentIds, userMessage.getId().toString());
+        return userMessage;
+    }
+
+    /**
+     * The newest visible user Message on this branch, when its Run failed. Same content / attachments
+     * / delivery ⇒ this send is the retry of that failed send, not a new turn.
+     */
+    private Message findFailedRetryTarget(String sessionId, String branchId, String content,
+                                          String attachmentsJson, String deliveryJson) {
+        List<Message> newest = messageRepository.findLatestPage(
+                sessionId, org.springframework.data.domain.PageRequest.of(0, 200));
+        for (Message candidate : newest) {
+            if (!Message.VISIBILITY_USER.equals(candidate.getVisibility())) {
+                continue;
+            }
+            if (!branchId.equals(candidate.getBranchId())) {
+                continue;
+            }
+            if (!Objects.equals(content, candidate.getContent())
+                    || !Objects.equals(attachmentsJson, candidate.getAttachments())
+                    || !Objects.equals(deliveryJson, candidate.getDelivery())) {
+                return null;
+            }
+            if (candidate.getRunId() == null || candidate.getRunId().isBlank()) {
+                return null;
+            }
+            ChatRun run = chatRunRepository.findById(UUID.fromString(candidate.getRunId())).orElse(null);
+            if (run != null && sessionId.equals(run.getSessionId())
+                    && "failed".equals(run.getStatus()) && run.getErrorCode() != null) {
+                return candidate;
+            }
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * task-931 step 3b: the admission transaction rolled back. Record the failure as its own
+     * terminal Run linked to the already-committed user Message, so the conversation still answers
+     * "who sent what, and why it failed" after a reload. A failure here must never replace the
+     * original error the caller is about to receive.
+     */
+    private void recordFailedSubmission(String runId, String sessionId, String userId, String workspaceId,
+                                        String branchId, String idempotencyKey, String requestHash,
+                                        String provider, String model, String toolMode,
+                                        String userMessageId, RuntimeException failure) {
+        try {
+            inNewTransaction(() -> {
+                ChatRun trace = new ChatRun(runId, sessionId, userId, workspaceId,
+                        idempotencyKey, requestHash, provider, model, toolMode, "failed");
+                trace.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
+                trace.setBranchId(branchId);
+                trace.setUserMessageId(userMessageId);
+                trace.setTerminalOutcome("error");
+                trace.setTerminalAt(Instant.now());
+                trace.setErrorCode(failureCode(failure));
+                trace.setErrorDetail(failureDetail(failure));
+                chatRunRepository.saveAndFlush(trace);
+                Message message = messageRepository.findById(UUID.fromString(userMessageId)).orElse(null);
+                if (message != null) {
+                    message.setRunId(runId);
+                    messageRepository.save(message);
+                }
+                logger.info("[LIFECYCLE] service=cp event=chat_submission_failed_traced sessionId={} runId={} "
+                                + "messageId={} errorCode={}",
+                        sessionId, runId, userMessageId, trace.getErrorCode());
+                return Boolean.TRUE;
+            });
+        } catch (RuntimeException traceFailure) {
+            logger.error("[LIFECYCLE] service=cp event=chat_submission_failed_trace_write_failed "
+                            + "sessionId={} runId={} messageId={} failureType={}",
+                    sessionId, runId, userMessageId, traceFailure.getClass().getSimpleName());
+        }
+    }
+
+    private static String failureCode(RuntimeException failure) {
+        if (failure instanceof CpApiException api && api.getCode() != null && !api.getCode().isBlank()) {
+            return api.getCode();
+        }
+        if (failure instanceof DataIntegrityViolationException) {
+            return "CHAT_ADMISSION_CONFLICT";
+        }
+        return "CHAT_SUBMISSION_FAILED";
+    }
+
+    private static String failureDetail(RuntimeException failure) {
+        String detail = failure.getMessage();
+        if (detail == null || detail.isBlank()) {
+            detail = failure.getClass().getSimpleName();
+        }
+        return detail.length() <= 2000 ? detail : detail.substring(0, 2000);
+    }
+
+    private <T> T inNewTransaction(Supplier<T> work) {
+        return traceTransaction.execute(status -> work.get());
     }
 
     /**

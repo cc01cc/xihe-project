@@ -203,6 +203,35 @@ const suggestions = computed(() =>
 
 const messages = computed(() => chatStore.getMessages(props.sessionId));
 
+/**
+ * task-931 / D-1934 / R65: a failed send is durable now, so the transcript can still answer
+ * "what did I send, and why did it fail" after a reload. The user bubble itself has no error
+ * box (that box is assistant-only by design), so the failure is surfaced as a persistent
+ * status region above the list — with the stable code and the technical detail collapsed.
+ * The notice disappears as soon as the retried Run succeeds (the Message's runStatus moves on)
+ * or a newer user turn arrives.
+ */
+const failedSendNotice = computed<Message | null>(() => {
+    const list = messages.value;
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+        const message = list[index];
+        if (message.role !== "user") continue;
+        if (message.runStatus !== "failed" || !message.errorCode) continue;
+        return message;
+    }
+    return null;
+});
+
+const failedSendPresentation = computed<ErrorPresentation | null>(() => {
+    const notice = failedSendNotice.value;
+    if (!notice) return null;
+    return presentCauseError(
+        t,
+        { problem: { code: notice.errorCode, detail: notice.error ?? undefined } },
+        t("errors.requestFailed"),
+    );
+});
+
 // PLAN-0670 M2d.3：超过 500 条时从最旧端丢弃并累计"已折叠"计数（显式呈现，不静默丢）。
 // 丢弃造成的 scrollHeight 变化由 MessageList 的 captureAnchor/restoreAnchor 补偿。
 // PLAN-0760：双计数（N=最近段 500 + M=已展开段 ≤1500）。
@@ -1446,30 +1475,40 @@ async function submitMessage(input: {
     chatStore.adoptRunId(id, result.runId);
 
     const userMessageId = result.messageId ?? crypto.randomUUID();
-    chatStore.markClientOwned(id, userMessageId);
-    chatStore.addMessage(id, {
-        id: userMessageId,
-        sessionId: id,
-        role: "user",
-        content,
-        timestamp: new Date().toISOString(),
-        branchId,
-        attachments,
-        runId: result.runId,
-        runStatus: result.status,
-        // PLAN-0631 D31-08: a `speakAs` message is attributed to the participant whose
-        // identity the caller chose (CP validates it). Absent = the caller's own words.
-        ...(asParticipantId ? { participantId: asParticipantId } : {}),
-        // PLAN-0659 T1.3：投递语义（发送/抄送）由 composer 这一层产出，**乐观本地视图**；
-        // PLAN-0665 M2 / V120 起已 durable（`messages.delivery` jsonb，BL-239 已关账）——
-        // 刷新后不再消失。不落 localStorage、不进 wire（本 PLAN 非目标）。
-        // PLAN-0665 M2 / V120：乐观消息直接写 **durable 形状**（`{to[], cc[]}`），
-        // 这样刷新回来的 durable `messages.delivery` 与本地是同一形状、同一渲染路径；
-        // legacy 形状只作为旧消息的回落（见 `resolveDelivery`）。
-        ...(toParticipantIds?.length || (cc?.length ?? 0) > 0
-            ? { delivery: { to: toParticipantIds ?? [], cc: cc ?? [] } }
-            : {}),
-    });
+    const existingUserMessage = chatStore
+        .getMessages(id)
+        .find((message) => message.id === userMessageId);
+    if (existingUserMessage) {
+        // task-931: a retry reuses the durable failed Message row. Rebind it to the new Run
+        // instead of appending a second bubble with the same id.
+        existingUserMessage.runId = result.runId;
+        existingUserMessage.runStatus = result.status;
+    } else {
+        chatStore.markClientOwned(id, userMessageId);
+        chatStore.addMessage(id, {
+            id: userMessageId,
+            sessionId: id,
+            role: "user",
+            content,
+            timestamp: new Date().toISOString(),
+            branchId,
+            attachments,
+            runId: result.runId,
+            runStatus: result.status,
+            // PLAN-0631 D31-08: a `speakAs` message is attributed to the participant whose
+            // identity the caller chose (CP validates it). Absent = the caller's own words.
+            ...(asParticipantId ? { participantId: asParticipantId } : {}),
+            // PLAN-0659 T1.3：投递语义（发送/抄送）由 composer 这一层产出，**乐观本地视图**；
+            // PLAN-0665 M2 / V120 起已 durable（`messages.delivery` jsonb，BL-239 已关账）——
+            // 刷新后不再消失。不落 localStorage、不进 wire（本 PLAN 非目标）。
+            // PLAN-0665 M2 / V120：乐观消息直接写 **durable 形状**（`{to[], cc[]}`），
+            // 这样刷新回来的 durable `messages.delivery` 与本地是同一形状、同一渲染路径；
+            // legacy 形状只作为旧消息的回落（见 `resolveDelivery`）。
+            ...(toParticipantIds?.length || (cc?.length ?? 0) > 0
+                ? { delivery: { to: toParticipantIds ?? [], cc: cc ?? [] } }
+                : {}),
+        });
+    }
     inputComponent.value?.clearDraft();
     // task-29：首条消息落库即命名（D-1866）⇒ 这一次重读把新标题带回侧栏，不刷页面、不切会话。
     rereadSessionAfterFirstMessage(id, hadNoMessages);
@@ -1485,6 +1524,17 @@ async function handleRetry(messageId: string) {
             break;
         }
     }
+    if (!userMessage) return;
+    await handleSend(userMessage.content, userMessage.attachments, userMessage.branchId);
+}
+
+/**
+ * task-931: retry the failed send itself. The CP reuses the already-durable user Message when
+ * content / branch / attachments / delivery match the newest failed trace, so the retry never
+ * inserts a second copy of the user's words.
+ */
+async function retryFailedSend(messageId: string) {
+    const userMessage = messages.value.find((message) => message.id === messageId);
     if (!userMessage) return;
     await handleSend(userMessage.content, userMessage.attachments, userMessage.branchId);
 }
@@ -1754,6 +1804,53 @@ watch(
             :error="derivedStateError"
             @retry="handleDerivedStateRefresh"
         />
+
+        <!-- task-931 / D-1934 / R65: a failed send is durable, so the failure must stay readable
+             after a reload. The user bubble has no assistant-only error box; this region owns the
+             failure copy, the stable code (collapsed technical detail) and the retry entry. -->
+        <div
+            v-if="failedSendNotice && failedSendPresentation"
+            data-testid="chat-failed-send"
+            role="alert"
+            class="mx-4 mt-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+        >
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="font-medium">{{ failedSendPresentation.copy }}</span>
+                <span class="text-muted-foreground">
+                    {{ t("errors.errorCodeLabel") }}
+                    <code
+                        data-testid="chat-failed-send-code"
+                        class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px]"
+                        >{{ failedSendNotice.errorCode }}</code
+                    >
+                </span>
+                <button
+                    type="button"
+                    class="ml-auto shrink-0 font-medium text-primary transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    data-testid="chat-failed-send-retry"
+                    @click="retryFailedSend(failedSendNotice.id)"
+                >
+                    {{ t("common.retry") }}
+                </button>
+            </div>
+            <Collapsible v-if="failedSendPresentation.technicalDetail">
+                <CollapsibleTrigger as-child>
+                    <button
+                        type="button"
+                        class="mt-1 rounded text-xs text-muted-foreground underline underline-offset-2"
+                        data-testid="chat-failed-send-detail-toggle"
+                    >
+                        {{ t("errors.technicalDetail") }}
+                    </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                    <pre
+                        data-testid="chat-failed-send-detail-body"
+                        class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
+                        >{{ failedSendPresentation.technicalDetail }}</pre>
+                </CollapsibleContent>
+            </Collapsible>
+        </div>
 
         <!-- PLAN-0631 D31-04: parked Run — say what is happening instead of a silent spinner. -->
         <Marker
