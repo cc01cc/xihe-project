@@ -1089,7 +1089,7 @@ describe("PLAN-0591 tool capability visibility", () => {
         expect(detail).toContain(i18n.global.t("settings.providerHub.apiTypeToolsSupported"));
         // 合成类型没有标签映射 ⇒ **原样显示裸 id**（`apiTypeLabels.ts:6-7` 的诚实回退）。
         // 这一对断言同时钉住「标签映射只覆盖 CP 真名，未登记的不猜名字」。
-        expect(detail).toContain("legacy-responses@1");
+        expect(detail).toContain(formatApiType("legacy-responses", 1, (key) => i18n.global.t(key)));
         expect(detail).toContain(i18n.global.t("settings.providerHub.apiTypeToolsUnsupported"));
         wrapper.unmount();
     });

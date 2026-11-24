@@ -63,8 +63,11 @@ function resolveUiLogLevel(env: Record<string, string>): ViteLogLevel {
 function flattenI18nKeys(): string[] {
     const source = readFileSync(path.resolve(__dirname, "src/i18n/index.ts"), "utf8");
     const body = source
-        .replace(/^import[^\n]*\n/m, "")
-        .replace("export const i18n = createI18n(", "const i18n = createI18n(");
+        // task-1011: the locale module now exports more than `i18n` (the copy gate imports
+        // `messages`), and `new Function` bodies cannot contain `export`. Strip every import
+        // line and neutralise the `export` keyword; everything else stays byte-identical.
+        .replace(/^import[^\n]*\n/gm, "")
+        .replace(/\bexport\s+(const|let|var|function|class)\b/g, "$1");
     const messages = new Function("createI18n", `${body}\nreturn i18n.global.messages;`)(
         (options: { messages: Record<string, unknown> }) => ({
             global: { messages: options.messages },

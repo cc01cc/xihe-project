@@ -9,7 +9,7 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { logger } from "../../lib/logger";
 import { validateField } from "../../lib/formValidation";
-import { formatApiType } from "../../lib/apiTypeLabels";
+import { formatApiType, formatApiTypeTechnical } from "../../lib/apiTypeLabels";
 import { ApiError, api, request } from "../../composables/api";
 import type { ProviderCatalog, CatalogModel, ModelPricing } from "../../types/provider";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
@@ -1662,10 +1662,9 @@ onMounted(() => {
                             </dt>
                             <dd data-testid="provider-connection-readonly-type" class="break-all">
                                 {{
-                                    formatApiType(
+                                    formatApiTypeTechnical(
                                         activeConnection.apiTypeId,
                                         activeConnection.apiTypeVersion,
-                                        t,
                                     )
                                 }}
                                 · {{ operationLabel(activeConnection.operation) }}

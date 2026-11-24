@@ -3292,7 +3292,7 @@ export const messages = {
             domainAgentRuntimeHint: "并发、超时、循环检测等执行参数；不确定时保持默认即可。",
             domainAgentProfile: "智能体个人",
             domainEmbedding: "嵌入模型",
-            apiTypeOpenaiChatCompletions: "OpenAI 对话补全",
+            apiTypeOpenaiChatCompletions: "OpenAI Chat Completions",
             apiTypeAnthropicMessages: "Anthropic Messages 协议",
             apiTypeMimoResponses: "MiMo Responses 协议",
             apiTypeDashscopeGeneration: "DashScope 文生文",

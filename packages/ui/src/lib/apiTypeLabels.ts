@@ -19,8 +19,11 @@ export function apiTypeLabelKey(apiTypeId: string | null | undefined): string | 
     return API_TYPE_LABEL_KEYS[(apiTypeId ?? "").trim()] ?? null;
 }
 /**
- * 展示用短名：`openai-chat-completions@1` ⇒ `OpenAI 对话补全@1`。
- * 版本号保留（同一 API Type 的多版本行为不同，抹掉会误导）。
+ * 展示用短名：`openai-chat-completions@1` ⇒ `OpenAI Chat Completions（v1）`。
+ *
+ * task-1011: the `@` form is a technical identifier — users read `@1` as noise. The version
+ * is still shown, but as a human-readable suffix in parentheses; the raw `id@version`
+ * form stays in `formatApiTypeTechnical` for technical detail / JSON.
  */
 export function formatApiType(
     apiTypeId: string | null | undefined,
@@ -30,5 +33,14 @@ export function formatApiType(
     const id = (apiTypeId ?? "").trim();
     const labelKey = apiTypeLabelKey(id);
     const label = labelKey ? translate(labelKey) : id;
-    return version == null ? label : `${label}@${version}`;
+    return version == null ? label : `${label}（v${version}）`;
+}
+
+/** Technical form: `openai-chat-completions@1` (for technical detail / raw JSON only). */
+export function formatApiTypeTechnical(
+    apiTypeId: string | null | undefined,
+    version: number | null | undefined,
+): string {
+    const id = (apiTypeId ?? "").trim();
+    return version == null ? id : `${id}@${version}`;
 }
