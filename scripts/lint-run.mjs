@@ -101,6 +101,9 @@ export const LINT_GATES = [
     "check:e2e-agent-names",
     "check:visual-await",
     "check:gate-executors",
+    // task-968（2026-11-24）：D-1940 同族的权限面版本 —— 每个动作原子必须有求值点或显式豁免。
+    // 当前树全绿（44 原子全有求值点）；这条门防的是回归，不是存量 bug。
+    "check:atom-evaluated",
 ];
 
 /**
