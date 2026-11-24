@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.PolicyChecked;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.policy.PresetGovernanceService;
@@ -46,6 +47,7 @@ public class PresetGovernanceController {
     /** Read-only difference between the bound templates and the subject's assigned rows. */
     @GetMapping("/compare")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:MANAGE_ROLES")
     public ResponseEntity<?> compare(@RequestParam("subjectType") String subjectType,
                                      @RequestParam("subjectId") String subjectId,
                                      @RequestParam(value = "presetId", required = false)
@@ -66,6 +68,7 @@ public class PresetGovernanceController {
     /** Replay the subject's bound presets into their own import groups; no-op stays a no-op. */
     @PostMapping("/realign")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:MANAGE_ROLES")
     public ResponseEntity<?> realign(@RequestBody(required = false) Map<String, Object> body) {
         String subjectType = body == null ? null : asString(body, "subjectType");
         String subjectId = body == null ? null : asString(body, "subjectId");

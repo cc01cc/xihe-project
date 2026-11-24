@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.OrgUnitNameKeys;
+import com.cc01cc.p.xihe.cp.config.PolicyChecked;
 import com.cc01cc.p.xihe.cp.service.OrgUnitMemberService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitReadService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitPresetBindingService;
@@ -115,6 +116,7 @@ public class OrgUnitController {
     @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{unitId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PolicyChecked(atom = "action:MANAGE_ORG_UNITS")
     public void delete(@PathVariable String unitId) {
         writeService.delete(unitId);
     }
@@ -180,6 +182,7 @@ public class OrgUnitController {
      */
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/{unitId}/member-candidates")
+    @PolicyChecked(atom = "action:READ_ORG_UNIT_MEMBERS")
     public OrgUnitWireView.MemberCandidateList memberCandidates(
             @PathVariable String unitId,
             @RequestParam String memberKind,

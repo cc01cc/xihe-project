@@ -92,6 +92,7 @@ public class WorkspaceController {
      */
     @PostMapping("/mxc-install")
     @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
+    @PolicyChecked(atom = "action:WRITE_INSTANCE_CONTENT")
     public ResponseEntity<?> mxcInstall() {
         try {
             return ResponseEntity.ok(mxcInstaller().install());
@@ -103,6 +104,7 @@ public class WorkspaceController {
     /** task-992: instance-owner override to an already installed executable (file-based, no DB channel). */
     @org.springframework.web.bind.annotation.PutMapping("/mxc-install/override")
     @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
+    @PolicyChecked(atom = "action:WRITE_INSTANCE_CONTENT")
     public ResponseEntity<?> mxcInstallOverride(@RequestBody(required = false) Map<String, String> body) {
         try {
             return ResponseEntity.ok(mxcInstaller().setOverride(body == null ? null : body.get("executablePath")));
@@ -113,6 +115,7 @@ public class WorkspaceController {
 
     @DeleteMapping("/mxc-install/override")
     @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
+    @PolicyChecked(atom = "action:WRITE_INSTANCE_CONTENT")
     public ResponseEntity<?> clearMxcInstallOverride() {
         try {
             return ResponseEntity.ok(mxcInstaller().clearOverride());
