@@ -56,8 +56,10 @@ import java.util.UUID;
  *       ({@code 403 PRIVILEGE_ESCALATION}).</li>
  * </ol>
  *
- * <p>Every affected subject is re-materialized in the same transaction: {@code source='preset'} atoms
- * are reconciled and the capability cache is invalidated immediately and after completion (R2-20).
+ * <p>Every affected subject is re-materialized in the same transaction: {@code source='assigned'}
+ * atoms (the current value since V186/task-933; the older {@code source='preset'} is a historical
+ * value only) are reconciled and the capability cache is invalidated immediately and after
+ * completion (R2-20).
  * An instance-tier change additionally moves the subject's epoch once through
  * {@link PresetGrantMaterializer#materializeSubjectWithEpochBump} (I4 — the access token carries the
  * instance role claim); a workspace-tier change only materializes, because the token carries no

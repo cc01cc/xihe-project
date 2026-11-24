@@ -22,8 +22,10 @@ import java.util.UUID;
  * <p>This is the counterpart of {@link AuthzContext}: that class answers capability questions
  * ({@code cap:instance:admin}) because capability atoms become Spring authorities (decision #23 /
  * R2-5), while action atoms ({@code read}, {@code MANAGE_ROLES}, ...) never leave the grant table —
- * they are answered from the materialized {@code source='preset'} rows through the same scoped read
- * the evaluation kernel uses ({@link AuthorizationGrantRepository#findScopedGrants}). A Spring
+ * they are answered from the materialized {@code source='assigned'} rows (the current value since
+ * V186/task-933; the older {@code source='preset'} is a historical value only) through the same
+ * scoped read the evaluation kernel uses
+ * ({@link AuthorizationGrantRepository#findScopedGrants}). A Spring
  * expression such as {@code @PreAuthorize("@requesterAuthority.holdsActionAtom('MANAGE_ROLES')")}
  * is therefore the honest way to put the design's {@code MANAGE_ROLES} gate on an endpoint: adding
  * a fourth capability atom for it would contradict decision #23, and {@code hasAuthority('…')}

@@ -22,7 +22,8 @@ import java.util.UUID;
  * {@link PluginBindingAuthorization}.
  *
  * <p>Before this class the gate was installed but nothing ever issued the hold it asks for: every
- * {@code PLUGIN_BIND} row in {@code grants} came from a role ({@code source='preset'}), so a
+ * {@code PLUGIN_BIND} row in {@code grants} came from a role ({@code source='assigned'}, the current
+ * value since V186/task-933; the older {@code source='preset'} is a historical value only), so a
  * binding-scoped authority had no origin and the "who holds the key to this binding" chain ended at
  * the role. Three write paths now share one lifecycle, all inside the caller's transaction:</p>
  * <ul>
