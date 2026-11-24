@@ -173,7 +173,7 @@ fn mxc_file_worker_real_boundary_matrix() {
 
     let (status, binary, _) = run_worker(
         workspace.path(),
-        encode_binary_request("binary/data.bin", &[0, 1, 127, 128, 254, 255]).unwrap(),
+        encode_binary_request("binary/data.bin", None, &[0, 1, 127, 128, 254, 255]).unwrap(),
     );
     assert_eq!(status, JobStatus::Succeeded);
     assert_eq!(binary["ok"], true);
