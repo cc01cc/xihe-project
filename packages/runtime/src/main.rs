@@ -214,7 +214,14 @@ use xihe_runtime::sandbox::SecurityProfile;
 
 tokio::task_local! {
     static CURRENT_WS_ID: String;
+    /// task-1008: the Xihe session id (`X-Session-Id`), threaded to the MCP service
+    /// factory so the browser page can be keyed by session instead of by MCP protocol
+    /// session (CP→Runtime stays stateless, decision #34).
+    static CURRENT_SESSION_ID: String;
 }
+
+/// Header the Agent sends on every tool call (`mcp_client.py`: `X-Session-Id`).
+pub const SESSION_HEADER: &str = "x-session-id";
 
 static MCP_SERVICE: OnceLock<StreamableHttpService<XiheRuntime, LocalSessionManager>> =
     OnceLock::new();
@@ -488,12 +495,30 @@ impl XiheRuntime {
         profile: SecurityProfile,
         router: Arc<WorkspaceExecutionRouter>,
     ) -> Self {
+        Self::with_browser(
+            ws_id,
+            workspace_path,
+            profile,
+            router,
+            Arc::new(browser_tools::BrowserTools::new(workspace_path)),
+        )
+    }
+
+    /// task-1008: the browser handle is supplied by the caller so a page survives across
+    /// the per-tool-call MCP sessions (see `browser_tools::BrowserSessionRegistry`).
+    pub fn with_browser(
+        ws_id: &str,
+        workspace_path: &str,
+        profile: SecurityProfile,
+        router: Arc<WorkspaceExecutionRouter>,
+        browser: Arc<browser_tools::BrowserTools>,
+    ) -> Self {
         Self {
             workspace: workspace_path.to_string(),
             ws_id: ws_id.to_string(),
             profile,
             router,
-            browser: Arc::new(browser_tools::BrowserTools::new(workspace_path)),
+            browser,
         }
     }
 
@@ -1866,35 +1891,47 @@ async fn workspace_mcp_handler(
     if let Err(error) = app.ensure_workspace(&ws_id).await {
         return runtime_problem(error).into_response();
     }
+    // task-1008: the browser page is keyed by the Xihe session, so the factory needs the
+    // `X-Session-Id` of *this* call. Read it before the request is consumed by the service.
+    let session_id = req
+        .headers()
+        .get(SESSION_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
     CURRENT_WS_ID
-        .scope(ws_id, async {
-            let Some(service) = MCP_SERVICE.get() else {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    AxumJson(serde_json::json!({
-                        "code": "MCP_SERVICE_UNAVAILABLE",
-                        "detail": "MCP service is not initialized",
-                        "requestId": uuid::Uuid::new_v4().to_string(),
-                    })),
-                )
-                    .into_response();
-            };
-            let mut svc = service.clone();
-            match svc.call(req).await {
-                Ok(response) => response.map(axum::body::Body::new),
-                Err(error) => {
-                    tracing::error!("workspace MCP request failed: {error}");
-                    (
-                        StatusCode::BAD_GATEWAY,
-                        AxumJson(serde_json::json!({
-                            "code": "MCP_REQUEST_FAILED",
-                            "detail": "Workspace MCP request failed",
-                            "requestId": uuid::Uuid::new_v4().to_string(),
-                        })),
-                    )
-                        .into_response()
-                }
-            }
+        .scope(ws_id, async move {
+            CURRENT_SESSION_ID
+                .scope(session_id, async {
+                    let Some(service) = MCP_SERVICE.get() else {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            AxumJson(serde_json::json!({
+                                "code": "MCP_SERVICE_UNAVAILABLE",
+                                "detail": "MCP service is not initialized",
+                                "requestId": uuid::Uuid::new_v4().to_string(),
+                            })),
+                        )
+                            .into_response();
+                    };
+                    let mut svc = service.clone();
+                    match svc.call(req).await {
+                        Ok(response) => response.map(axum::body::Body::new),
+                        Err(error) => {
+                            tracing::error!("workspace MCP request failed: {error}");
+                            (
+                                StatusCode::BAD_GATEWAY,
+                                AxumJson(serde_json::json!({
+                                    "code": "MCP_REQUEST_FAILED",
+                                    "detail": "Workspace MCP request failed",
+                                    "requestId": uuid::Uuid::new_v4().to_string(),
+                                })),
+                            )
+                                .into_response()
+                        }
+                    }
+                })
+                .await
         })
         .await
 }
@@ -4362,8 +4399,22 @@ async fn run() -> anyhow::Result<()> {
                 }
             };
             let profile = instance.profile;
-            let runtime =
-                XiheRuntime::new(&ws_id, &instance.workspace_path, profile, router.clone());
+            // task-1008: share one page per (workspace, Xihe session) across every MCP
+            // protocol session — CP opens a fresh one per tool call (decision #34).
+            let session_id = CURRENT_SESSION_ID
+                .try_with(|id| id.clone())
+                .unwrap_or_default();
+            let browser = Arc::new(browser_tools::browser_sessions().tools_for(
+                browser_tools::BrowserSessionKey::new(&ws_id, &session_id),
+                || browser_tools::BrowserTools::new(&instance.workspace_path),
+            ));
+            let runtime = XiheRuntime::with_browser(
+                &ws_id,
+                &instance.workspace_path,
+                profile,
+                router.clone(),
+                browser,
+            );
             Ok(runtime)
         },
         LocalSessionManager::default().into(),

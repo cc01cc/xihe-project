@@ -14,7 +14,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::page::ScreenshotParams;
@@ -269,12 +270,153 @@ impl Drop for Session {
     }
 }
 
+/// task-1008: the page belongs to the **Xihe session**, never to the MCP protocol
+/// session. CP→Runtime is deliberately stateless (decision #34) and opens a fresh
+/// MCP session per tool call, so a page owned by the per-MCP-session `XiheRuntime`
+/// died between `navigate` and `snapshot` (`BROWSER_NOT_READY`). The registry keys
+/// the page by `(workspaceId, X-Session-Id)` and hands out clones that share one
+/// page slot.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BrowserSessionKey {
+    pub workspace_id: String,
+    pub session_id: String,
+}
+
+impl BrowserSessionKey {
+    pub fn new(workspace_id: impl Into<String>, session_id: impl Into<String>) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+            session_id: session_id.into(),
+        }
+    }
+}
+
+/// Env knob: upper bound on live pages (LRU eviction once exceeded). Default 16.
+pub const ENV_MAX_SESSIONS: &str = "XIHE_BROWSER_MAX_SESSIONS";
+/// Env knob: idle TTL in seconds for a page. Default 900 (15 min).
+pub const ENV_SESSION_IDLE_SECS: &str = "XIHE_BROWSER_SESSION_IDLE_SECS";
+
+const DEFAULT_MAX_SESSIONS: usize = 16;
+const DEFAULT_SESSION_IDLE: Duration = Duration::from_secs(900);
+
+struct RegistryEntry {
+    tools: BrowserTools,
+    last_used: Instant,
+}
+
+/// Process-level page registry (task-1008). One entry per `(workspace, session)`, with a
+/// bounded lifecycle: entries idle longer than the TTL, or beyond the capacity, are evicted
+/// (dropping the last handle closes the chromium child via `Session::drop`).
+pub struct BrowserSessionRegistry {
+    entries: std::sync::Mutex<HashMap<BrowserSessionKey, RegistryEntry>>,
+    max_entries: usize,
+    idle_ttl: Duration,
+}
+
+impl Default for BrowserSessionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BrowserSessionRegistry {
+    pub fn new() -> Self {
+        let max_entries = std::env::var(ENV_MAX_SESSIONS)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_MAX_SESSIONS);
+        let idle_ttl = std::env::var(ENV_SESSION_IDLE_SECS)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .map(Duration::from_secs)
+            .unwrap_or(DEFAULT_SESSION_IDLE);
+        Self::with_limits(max_entries, idle_ttl)
+    }
+
+    /// Explicit limits (tests and acceptance runs).
+    pub fn with_limits(max_entries: usize, idle_ttl: Duration) -> Self {
+        Self {
+            entries: std::sync::Mutex::new(HashMap::new()),
+            max_entries: max_entries.max(1),
+            idle_ttl,
+        }
+    }
+
+    /// Returns the handle for `key`, building it on first use. The returned value shares
+    /// the page slot with every other handle for the same key, so navigate/snapshot/click/
+    /// screenshot compose even when they arrive through different MCP protocol sessions.
+    ///
+    /// Lifecycle runs here (the only entry point): expired entries are swept, and if the
+    /// registry is still at capacity the least-recently-used entry is evicted to make room.
+    pub fn tools_for<F>(&self, key: BrowserSessionKey, build: F) -> BrowserTools
+    where
+        F: FnOnce() -> BrowserTools,
+    {
+        let now = Instant::now();
+        let mut guard = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.retain(|_, entry| now.duration_since(entry.last_used) < self.idle_ttl);
+        if let Some(entry) = guard.get_mut(&key) {
+            entry.last_used = now;
+            return entry.tools.clone();
+        }
+        if guard.len() >= self.max_entries {
+            if let Some(oldest) = guard
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            {
+                guard.remove(&oldest);
+            }
+        }
+        let tools = build();
+        guard.insert(
+            key,
+            RegistryEntry {
+                tools: tools.clone(),
+                last_used: now,
+            },
+        );
+        tools
+    }
+
+    #[allow(dead_code)] // registry bookkeeping read in tests and the evidence run
+    pub fn len(&self) -> usize {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
+    }
+
+    /// Force-remove one key (used by teardown/tests; dropping the last handle closes the page).
+    #[allow(dead_code)]
+    pub fn remove(&self, key: &BrowserSessionKey) -> bool {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(key)
+            .is_some()
+    }
+}
+
+/// The single process-wide registry. Keyed by workspace + session, so a Runtime
+/// restart is the only thing that drops pages (documented residual in the evidence).
+pub fn browser_sessions() -> &'static BrowserSessionRegistry {
+    static REGISTRY: std::sync::OnceLock<BrowserSessionRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(BrowserSessionRegistry::new)
+}
+
 /// Per-runtime-instance browser session. Serialized by a mutex: a session has one page,
 /// so concurrent tool calls queue instead of racing.
+#[derive(Clone)]
 pub struct BrowserTools {
     workspace: PathBuf,
     allowed_origins: Vec<String>,
-    session: Mutex<Option<Session>>,
+    session: Arc<Mutex<Option<Session>>>,
 }
 
 impl BrowserTools {
@@ -295,7 +437,7 @@ impl BrowserTools {
         Self {
             workspace: workspace.as_ref().to_path_buf(),
             allowed_origins,
-            session: Mutex::new(None),
+            session: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -899,6 +1041,196 @@ mod tests {
         let error = tools.navigate(&format!("{origin}/")).await.unwrap_err();
         assert_eq!(error.code, ERROR_ORIGIN_BLOCKED);
         assert!(error.message.contains("not in the allowlist"));
+        server.abort();
+    }
+
+    /// task-1008 regression: the page must survive **across handles**, because CP opens a new
+    /// MCP protocol session per tool call. Two handles for the same `(workspace, session)` key
+    /// behave like one page; a different session (or a different workspace) must not see it.
+    #[tokio::test]
+    async fn registry_shares_one_page_per_session_and_isolates_others() {
+        if let Err(error) = resolve_executable() {
+            assert_eq!(error.code, ERROR_NOT_INSTALLED);
+            if std::env::var("XIHE_BROWSER_TEST_REQUIRED").as_deref() == Ok("1") {
+                panic!(
+                    "real browser E2E required but no browser is installed: {}",
+                    error.message
+                );
+            }
+            eprintln!("SKIP real browser registry E2E: {}", error.message);
+            return;
+        }
+        let (origin, server) = serve_probe_page().await;
+        let allowed = vec![normalize_origin(&origin).expect("probe origin normalizes")];
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let registry = BrowserSessionRegistry::new();
+
+        let build = || BrowserTools::with_origins(workspace.path(), allowed.clone());
+        // Two handles for the SAME key: exactly the shape of two MCP sessions in one Xihe session.
+        let first = registry.tools_for(BrowserSessionKey::new("ws-1", "sess-1"), build);
+        let second = registry.tools_for(BrowserSessionKey::new("ws-1", "sess-1"), build);
+
+        let nav = first
+            .navigate(&format!("{origin}/"))
+            .await
+            .expect("navigate through handle A");
+        assert_eq!(nav.title, "task-993 browser probe");
+
+        // The old failure: this handle never navigated, yet must see the same page.
+        let snap = second
+            .snapshot()
+            .await
+            .expect("BROWSER_NOT_READY regression: handle B must see handle A's page");
+        assert!(snap.text.contains("idle"), "snapshot text: {}", snap.text);
+        let go_ref = snap
+            .text
+            .lines()
+            .find(|line| line.contains("button") && line.contains("\"Go\""))
+            .and_then(|line| line.split_whitespace().next())
+            .map(str::to_string)
+            .expect("button ref present in snapshot");
+
+        let click = second.click(&go_ref).await.expect("click through handle B");
+        assert_eq!(click.target, go_ref);
+        let after = first
+            .snapshot()
+            .await
+            .expect("snapshot after click through handle A");
+        assert!(
+            after.text.contains("clicked"),
+            "the click from handle B must be visible on handle A:\n{}",
+            after.text
+        );
+        let shot = first
+            .screenshot()
+            .await
+            .expect("screenshot through handle A");
+        assert!(shot.bytes > 0, "empty screenshot");
+        assert!(std::path::Path::new(&shot.artifact_path).is_file());
+
+        // Isolation: another session in the same workspace, and the same session id in another
+        // workspace, must not inherit the page.
+        let other_session = registry.tools_for(BrowserSessionKey::new("ws-1", "sess-2"), build);
+        let error = other_session.snapshot().await.unwrap_err();
+        assert_eq!(error.code, ERROR_NOT_READY, "{}", error.message);
+        let other_workspace = registry.tools_for(BrowserSessionKey::new("ws-2", "sess-1"), build);
+        let error = other_workspace.snapshot().await.unwrap_err();
+        assert_eq!(error.code, ERROR_NOT_READY, "{}", error.message);
+        assert_eq!(registry.len(), 3, "one entry per distinct key");
+
+        first.shutdown().await;
+        // shutdown on the shared slot is visible through the other handle as well.
+        let error = second.snapshot().await.unwrap_err();
+        assert_eq!(error.code, ERROR_NOT_READY, "{}", error.message);
+        server.abort();
+    }
+
+    #[test]
+    fn registry_returns_the_same_slot_for_the_same_key_only() {
+        let registry = BrowserSessionRegistry::new();
+        let a = registry.tools_for(BrowserSessionKey::new("ws", "s1"), || {
+            BrowserTools::with_origins(".", Vec::new())
+        });
+        let b = registry.tools_for(BrowserSessionKey::new("ws", "s1"), || {
+            BrowserTools::with_origins(".", Vec::new())
+        });
+        let c = registry.tools_for(BrowserSessionKey::new("ws", "s2"), || {
+            BrowserTools::with_origins(".", Vec::new())
+        });
+        // Same key ⇒ same shared slot (Arc identity), different key ⇒ distinct slot.
+        assert!(Arc::ptr_eq(&a.session, &b.session));
+        assert!(!Arc::ptr_eq(&a.session, &c.session));
+        assert_eq!(registry.len(), 2);
+    }
+
+    /// task-1008 lifecycle: an evicted (capacity or idle-TTL) entry drops its page; the next
+    /// navigate for that key launches a fresh browser and works again. Handles are used
+    /// per-call (like `XiheRuntime`, which dies with each MCP protocol session).
+    #[tokio::test]
+    async fn registry_evicts_by_capacity_and_idle_ttl_then_rebuilds_on_navigate() {
+        if let Err(error) = resolve_executable() {
+            assert_eq!(error.code, ERROR_NOT_INSTALLED);
+            if std::env::var("XIHE_BROWSER_TEST_REQUIRED").as_deref() == Ok("1") {
+                panic!(
+                    "real browser E2E required but no browser is installed: {}",
+                    error.message
+                );
+            }
+            eprintln!("SKIP real browser lifecycle E2E: {}", error.message);
+            return;
+        }
+        let (origin, server) = serve_probe_page().await;
+        let allowed = vec![normalize_origin(&origin).expect("probe origin normalizes")];
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let build = || BrowserTools::with_origins(workspace.path(), allowed.clone());
+
+        // --- capacity eviction (max = 1) -----------------------------------------------------
+        let capped = BrowserSessionRegistry::with_limits(1, Duration::from_secs(3600));
+        let key_a = BrowserSessionKey::new("ws-cap", "sess-a");
+        let key_b = BrowserSessionKey::new("ws-cap", "sess-b");
+        {
+            let handle = capped.tools_for(key_a.clone(), build);
+            let nav = handle
+                .navigate(&format!("{origin}/"))
+                .await
+                .expect("navigate A");
+            assert_eq!(nav.title, "task-993 browser probe");
+        } // per-call handle drops; only the registry keeps the page alive
+        assert_eq!(capped.len(), 1, "one live page before eviction");
+
+        let handle_b = capped.tools_for(key_b, build);
+        assert_eq!(capped.len(), 1, "capacity 1: inserting B evicts A");
+        drop(handle_b);
+
+        let rebuilt = capped.tools_for(key_a.clone(), build);
+        let error = rebuilt.snapshot().await.unwrap_err();
+        assert_eq!(
+            error.code, ERROR_NOT_READY,
+            "the evicted page must be gone, not silently reused: {}",
+            error.message
+        );
+        let nav = rebuilt
+            .navigate(&format!("{origin}/"))
+            .await
+            .expect("navigate after eviction launches a fresh page");
+        assert_eq!(nav.title, "task-993 browser probe");
+        let snap = rebuilt.snapshot().await.expect("snapshot after rebuild");
+        assert!(
+            snap.text.contains("idle"),
+            "rebuild snapshot: {}",
+            snap.text
+        );
+        rebuilt.shutdown().await;
+        drop(rebuilt);
+        assert!(capped.remove(&key_a), "explicit teardown removes the entry");
+        assert_eq!(capped.len(), 0, "no live pages after teardown");
+
+        // --- idle TTL eviction ---------------------------------------------------------------
+        let idle = BrowserSessionRegistry::with_limits(8, Duration::from_millis(150));
+        let key_c = BrowserSessionKey::new("ws-ttl", "sess-c");
+        {
+            let handle = idle.tools_for(key_c.clone(), build);
+            handle
+                .navigate(&format!("{origin}/"))
+                .await
+                .expect("navigate C");
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let after_ttl = idle.tools_for(key_c, build);
+        assert_eq!(idle.len(), 1, "a re-entry recreates exactly one entry");
+        let error = after_ttl.snapshot().await.unwrap_err();
+        assert_eq!(
+            error.code, ERROR_NOT_READY,
+            "the idle page must have been swept: {}",
+            error.message
+        );
+        let nav = after_ttl
+            .navigate(&format!("{origin}/"))
+            .await
+            .expect("navigate after idle eviction");
+        assert_eq!(nav.title, "task-993 browser probe");
+        after_ttl.shutdown().await;
+
         server.abort();
     }
 }
