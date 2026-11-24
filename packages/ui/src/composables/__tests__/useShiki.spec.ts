@@ -89,4 +89,21 @@ describe("useShiki", () => {
         await expect(highlightCodeBlock("x", "typescript")).resolves.toContain("ok");
         expect(createHighlighter).toHaveBeenCalledTimes(2);
     });
+
+    // shiki 4.6.0 fixed "primitive: Apply injections loaded after their target grammar"
+    // (https://github.com/shikijs/shiki/releases/tag/v4.6.0). That fix only reaches us through
+    // the on-demand branch below (grammars outside PRELOADED_LANGS are loaded after the
+    // highlighter already exists), so the branch must keep loading exactly once per language.
+    it("lazy-loads a non-preloaded grammar once and reuses it (4.6.0 injection fix path)", async () => {
+        const { highlightCodeBlock } = await fresh();
+        await highlightCodeBlock("fn main() {}", "rust");
+        expect(loadLanguage).toHaveBeenCalledTimes(1);
+        expect(loadLanguage).toHaveBeenCalledWith("rust");
+        await highlightCodeBlock("fn other() {}", "rust");
+        expect(loadLanguage).toHaveBeenCalledTimes(1);
+        expect(codeToHtml).toHaveBeenLastCalledWith(
+            "fn other() {}",
+            expect.objectContaining({ lang: "rust" }),
+        );
+    });
 });
