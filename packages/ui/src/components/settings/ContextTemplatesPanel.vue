@@ -45,6 +45,11 @@ const templates = ref<ApiRequestTemplate[]>([]);
 const types = ref<ApiInputType[]>([]);
 const builtins = ref<ApiRequestTemplate[]>([]);
 const selected = ref<ApiRequestTemplate | null>(null);
+/**
+ * task-964：选中项是不是「内置投影」决定详情区是否只读。用显式标记而不是按 id 猜，
+ * 因为用户层也可能存在与内置同 id 的历史行（那是用户可编辑的模板）。
+ */
+const selectedBuiltin = ref(false);
 /** task-34：JSON 编辑区（CodeMirror 6）句柄 —— 变量插入要落在光标处。 */
 const editorRef = ref<InstanceType<typeof JsonFieldEditor> | null>(null);
 const selectedType = ref("");
@@ -57,6 +62,25 @@ let generation = 0;
 onBeforeUnmount(() => {
     generation++;
 });
+const builtinIds = computed(() => new Set(builtins.value.map((item) => item.id)));
+/**
+ * task-964：内置模板是实例层代码投影（task-944），读面可见但不可改。
+ * 判据用 (layer, id)：用户层的同名 id 只可能是用户自己的模板，不按实例内置名单收紧。
+ */
+function isBuiltinRow(item: ApiRequestTemplate): boolean {
+    return props.layer === "instance" && builtinIds.value.has(item.id);
+}
+/** 内置行显示名：按 API Type 的本地化短名重建，不直出 CP 的英文名或 wire 串。 */
+function builtinBaseName(item: ApiRequestTemplate): string {
+    return formatApiType(item.apiTypeId, null, t);
+}
+function builtinDisplayName(item: ApiRequestTemplate): string {
+    return builtinBaseName(item) + t("settings.apiRequest.builtinSuffix");
+}
+function templateDisplayName(item: ApiRequestTemplate): string {
+    if (!isBuiltinRow(item)) return item.name;
+    return builtinDisplayName(item);
+}
 const palette = [
     "user_input",
     "agent_instructions",
@@ -76,6 +100,21 @@ const latest = computed(() => {
             result.set(item.id, item);
     return [...result.values()];
 });
+/**
+ * task-964：用户层也要能看到实例内置（只读），并按行复制成**自己的**可编辑模板。
+ * 实例层的内置已经由 CP 合并进 `entries`，所以只在非实例层补这一段，避免重复两行。
+ */
+const builtinRows = computed(() => {
+    if (props.layer === "instance") return [];
+    const byId = new Map<string, ApiRequestTemplate>();
+    for (const item of builtins.value) {
+        const current = byId.get(item.id);
+        if (!current || current.version < item.version) byId.set(item.id, item);
+    }
+    return [...byId.values()].filter(
+        (item) => !latest.value.some((candidate) => candidate.id === item.id),
+    );
+});
 const revisions = computed(() =>
     templates.value
         .filter((item) => item.id === selected.value?.id)
@@ -87,6 +126,7 @@ watch(
         if (!previous || layer !== previous[0]) {
             generation++;
             selected.value = null;
+            selectedBuiltin.value = false;
             diagnostics.value = [];
             error.value = "";
             validating.value = false;
@@ -115,6 +155,7 @@ onMounted(async () => {
         builtins.value = parseTemplates(entries.templates).filter(
             (item) => item.status === "published",
         );
+        if (selected.value) selectedBuiltin.value = isBuiltinRow(selected.value);
         selectedType.value = types.value[0] ? typeKey(types.value[0]) : "";
     } catch (cause) {
         if (currentGeneration !== generation) return;
@@ -127,6 +168,13 @@ function typeKey(item: ApiInputType) {
 }
 function select(item: ApiRequestTemplate) {
     selected.value = { ...item };
+    selectedBuiltin.value = isBuiltinRow(item);
+    diagnostics.value = [];
+    error.value = "";
+}
+function selectBuiltinRow(item: ApiRequestTemplate) {
+    selected.value = { ...item };
+    selectedBuiltin.value = true;
     diagnostics.value = [];
     error.value = "";
 }
@@ -149,7 +197,28 @@ function create() {
         bodySource: builtin.bodySource,
         status: "draft",
     };
+    selectedBuiltin.value = false;
     diagnostics.value = [];
+}
+/**
+ * task-964 B2：内置行级「复制为我的模板」——复制 body 到一条**新 id 的草稿**，
+ * 让用户在实例层（或用户层的新建路径）继续改名/保存；内置行本身仍只读。
+ */
+function copyBuiltin(item: ApiRequestTemplate) {
+    selected.value = {
+        id: crypto.randomUUID(),
+        version: 1,
+        name: t("settings.apiRequest.copyName", { name: builtinBaseName(item) }),
+        description: t("settings.apiRequest.copyDescription"),
+        apiTypeId: item.apiTypeId,
+        apiTypeVersion: item.apiTypeVersion,
+        bodySource: item.bodySource,
+        status: "draft",
+    };
+    selectedBuiltin.value = false;
+    diagnostics.value = [];
+    error.value = "";
+    toast.info(t("settings.apiRequest.copied"));
 }
 function insertVariable(name: string) {
     if (!selected.value) return;
@@ -206,6 +275,7 @@ async function refreshTemplatesFromServer() {
         if (props.layer === "instance") {
             builtins.value = templates.value.filter((item) => item.status === "published");
         }
+        if (selected.value) selectedBuiltin.value = isBuiltinRow(selected.value);
     } catch (cause) {
         logger.warn("API request template refresh after save failed", cause);
     }
@@ -347,7 +417,7 @@ async function save(publish: boolean) {
                      （208px 实测文本区只有 162px，仍裁 2 项）。 -->
                 <SelectContent class="min-w-60">
                     <SelectItem v-for="type in types" :key="typeKey(type)" :value="typeKey(type)">
-                        {{ formatApiType(type.apiTypeId, type.version, t) }}
+                        {{ formatApiType(type.apiTypeId, null, t) }}
                     </SelectItem>
                 </SelectContent>
             </Select>
@@ -367,19 +437,68 @@ async function save(publish: boolean) {
                 class="border-b p-2 md:border-b-0 md:border-r"
                 :aria-label="t('settings.apiRequest.templates')"
             >
-                <button
+                <!-- task-964：用户层也列出实例内置（只读），行级复制成自己的可编辑模板。 -->
+                <div v-if="builtinRows.length" class="mb-2 space-y-1">
+                    <p class="px-3 text-xs font-semibold text-muted-foreground">
+                        {{ t("settings.apiRequest.builtinSection") }}
+                    </p>
+                    <div
+                        v-for="item in builtinRows"
+                        :key="`builtin-${item.id}`"
+                        class="flex items-start gap-1 rounded-md hover:bg-muted"
+                        :class="{ 'bg-muted': selected?.id === item.id }"
+                        :data-testid="`api-request-builtin-row-${item.id}`"
+                    >
+                        <button
+                            type="button"
+                            class="min-w-0 flex-1 rounded-md px-3 py-2 text-left text-sm"
+                            @click="selectBuiltinRow(item)"
+                        >
+                            {{ builtinDisplayName(item) }}
+                            <span class="text-xs text-muted-foreground"
+                                >v{{ item.version }} · {{ statusLabel(item.status) }}</span
+                            >
+                        </button>
+                        <button
+                            v-if="!readonly"
+                            type="button"
+                            :data-testid="`api-request-copy-${item.id}`"
+                            :title="t('settings.apiRequest.copyToMine')"
+                            class="m-1 shrink-0 rounded border px-2 py-1 text-xs"
+                            @click="copyBuiltin(item)"
+                        >
+                            {{ t("settings.apiRequest.copyToMine") }}
+                        </button>
+                    </div>
+                </div>
+                <div
                     v-for="item in latest"
                     :key="item.id"
-                    type="button"
-                    class="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                    class="flex items-start gap-1 rounded-md hover:bg-muted"
                     :class="{ 'bg-muted': selected?.id === item.id }"
-                    @click="select(item)"
                 >
-                    {{ item.name }}
-                    <span class="text-xs text-muted-foreground"
-                        >v{{ item.version }} · {{ statusLabel(item.status) }}</span
+                    <button
+                        type="button"
+                        class="min-w-0 flex-1 rounded-md px-3 py-2 text-left text-sm"
+                        @click="select(item)"
                     >
-                </button>
+                        {{ templateDisplayName(item) }}
+                        <span class="text-xs text-muted-foreground"
+                            >v{{ item.version }} · {{ statusLabel(item.status) }}</span
+                        >
+                    </button>
+                    <!-- task-964 B2：内置行保留只读，复制出新 id 的草稿；用户改副本而不是改内置。 -->
+                    <button
+                        v-if="isBuiltinRow(item) && !readonly"
+                        type="button"
+                        :data-testid="`api-request-copy-${item.id}`"
+                        :title="t('settings.apiRequest.copyToMine')"
+                        class="m-1 shrink-0 rounded border px-2 py-1 text-xs"
+                        @click="copyBuiltin(item)"
+                    >
+                        {{ t("settings.apiRequest.copyToMine") }}
+                    </button>
+                </div>
                 <!--
                     task-409 P2-2（D-949 #21 A）：空态原来只有一句话，没有出口。
                     内嵌 CTA 走**同一条 create()**，不另写创建逻辑；禁用判据与工具栏一致。
@@ -413,7 +532,7 @@ async function save(publish: boolean) {
             </nav>
             <div v-if="selected" class="min-w-0 space-y-3 p-4">
                 <div class="flex flex-wrap items-center gap-2 text-xs">
-                    <span>{{ formatApiType(selected.apiTypeId, selected.apiTypeVersion, t) }}</span>
+                    <span>{{ formatApiType(selected.apiTypeId, null, t) }}</span>
                     <Select
                         :model-value="String(selected?.version ?? '')"
                         @update:model-value="
@@ -456,17 +575,17 @@ async function save(publish: boolean) {
                         v-model="selected.name"
                         data-testid="api-request-name"
                         class="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                        :disabled="readonly"
+                        :disabled="readonly || selectedBuiltin"
                 /></label>
                 <label class="block text-xs"
                     >{{ t("settings.apiRequest.description")
                     }}<input
                         v-model="selected.description"
                         class="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                        :disabled="readonly"
+                        :disabled="readonly || selectedBuiltin"
                 /></label>
                 <div
-                    v-if="!readonly"
+                    v-if="!readonly && !selectedBuiltin"
                     class="flex flex-wrap gap-1"
                     :aria-label="t('settings.apiRequest.variables')"
                 >
@@ -488,7 +607,7 @@ async function save(publish: boolean) {
                         control-id="api-request-body-source"
                         test-id="api-request-body-source"
                         host-class="min-h-80 max-h-[28rem]"
-                        :disabled="readonly"
+                        :disabled="readonly || selectedBuiltin"
                     />
                 </label>
                 <ul
@@ -501,7 +620,15 @@ async function save(publish: boolean) {
                     </li>
                 </ul>
                 <p class="text-xs text-muted-foreground">{{ t("settings.apiRequest.rawHelp") }}</p>
-                <div v-if="!readonly" class="flex flex-wrap items-center gap-2">
+                <p
+                    v-if="selectedBuiltin"
+                    role="status"
+                    data-testid="api-request-builtin-readonly"
+                    class="text-xs text-muted-foreground"
+                >
+                    {{ t("settings.apiRequest.builtinReadonly") }}
+                </p>
+                <div v-if="!readonly && !selectedBuiltin" class="flex flex-wrap items-center gap-2">
                     <button
                         type="button"
                         data-testid="api-request-save-draft"

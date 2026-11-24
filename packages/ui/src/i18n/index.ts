@@ -3147,6 +3147,7 @@ const messages = {
                 statusPublished: "已发布",
                 inherit: "继承连接默认模板",
                 builtinSuffix: "（内置）",
+                builtinSection: "内置模板（只读）",
                 builtinReadonly: "内置模板只读。需要修改时，请复制为我的模板。",
                 copyToMine: "复制为我的模板",
                 copyName: "{name} 副本",
@@ -7698,6 +7699,7 @@ const messages = {
                 statusPublished: "Published",
                 inherit: "Inherit connection default",
                 builtinSuffix: " · Built-in",
+                builtinSection: "Built-in templates (read-only)",
                 builtinReadonly:
                     "Built-in templates are read-only. Copy one to make an editable template.",
                 copyToMine: "Copy as my template",
