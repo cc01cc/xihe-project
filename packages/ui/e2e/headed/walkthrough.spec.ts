@@ -168,7 +168,7 @@ async function landOnWorkspacePicker(page: Page): Promise<"picker-empty" | "pick
                     return "picker";
                 if (
                     await page
-                        .getByTestId("sidebar-add-workspace")
+                        .getByTestId("sidebar-new-workspace")
                         .isVisible()
                         .catch(() => false)
                 )
@@ -210,7 +210,7 @@ async function createWorkspaceViaDialog(
     mkdirSync(hostDir, { recursive: true });
 
     await page
-        .getByTestId(opener === "picker" ? "workspace-picker-create" : "sidebar-add-workspace")
+        .getByTestId(opener === "picker" ? "workspace-picker-create" : "sidebar-new-workspace")
         .click();
     await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({
         timeout: LONG_TIMEOUT_MS,
@@ -427,7 +427,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
             if (landing === "picker") {
                 await page.locator('[data-testid^="workspace-picker-item-"]').first().click();
             }
-            await expect(page.getByTestId("sidebar-add-workspace")).toBeVisible({
+            await expect(page.getByTestId("sidebar-new-workspace")).toBeVisible({
                 timeout: LONG_TIMEOUT_MS,
             });
             created = await createWorkspaceViaDialog(page, request, "toolbar");
@@ -669,10 +669,10 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         } else if (landing === "picker-empty") {
             await createWorkspaceViaDialog(page, request, "picker");
         }
-        await expect(page.getByTestId("sidebar-add-workspace")).toBeVisible({
+        await expect(page.getByTestId("sidebar-new-workspace")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
-        await page.getByTestId("sidebar-add-workspace").click();
+        await page.getByTestId("sidebar-new-workspace").click();
         await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

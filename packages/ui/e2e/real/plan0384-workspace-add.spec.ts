@@ -7,7 +7,6 @@ import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
-import { clickSidebarActionMenuItem } from "./helpers/sidebar-menu";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -165,8 +164,8 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
             (req) => req.url().endsWith("/api/v1/workspaces") && req.method() === "POST",
         );
 
-        // task-149：菜单项在 DropdownMenuContent 内，未展开时不在 DOM ⇒ 必须先展开区头菜单。
-        await clickSidebarActionMenuItem(page, "sidebar-add-workspace");
+        // task-1023：区头 `+` 一步直达创建弹窗（不再经过菜单）。
+        await page.getByTestId("sidebar-new-workspace").click();
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeVisible();
 
         // V1: directory selection goes through the Runtime-visible source browser (no File.path).

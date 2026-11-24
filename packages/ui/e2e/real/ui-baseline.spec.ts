@@ -782,7 +782,7 @@ async function readLayout(page: Page): Promise<LayoutReading> {
             sidebar: {
                 newChat: rect('[data-testid="sidebar-new-chat"]'),
                 search: rect('[data-testid="sidebar-session-search"]'),
-                addWs: rect('[data-testid="sidebar-add-workspace"]'),
+                addWs: rect('[data-testid="sidebar-new-workspace"]'),
             },
         };
     }, CHROME_EXCLUDED_KEYS);
@@ -1542,11 +1542,9 @@ async function runMatrix(
         const { newChat } = layout.sidebar;
         // 让位态判据：侧栏盒宽 < 100 ⇒ rail 形态（展开态 336.39，让位态 57.03，见 NAV_YIELD_MAX_PX）。
         const navYielded = (layout.sidebarBox?.w ?? 0) < NAV_YIELD_MAX_PX;
-        // task-149（取代 task-120 F-8 的 count 兜底）：sidebar-new-workspace（Sidebar.vue:275）是区头**恒常**
-        // 触发器；它的两个菜单项 sidebar-add-workspace（:285）/ sidebar-import-source（:292）在
-        // DropdownMenuContent（:283）内，菜单未展开时**不在 DOM** ⇒ 旧写法按当前 DOM 取值结构性永远取不到
-        // （add-workspace 永久假红、import-source 空覆盖）。现在：展开菜单 → 量两项 → 立刻关闭，
-        // 并断言关闭后菜单项已离开 DOM，不留开着的弹层污染后续断言。
+        // task-1023（取代 task-149 的两步入口）：sidebar-new-workspace 是**一步直达**的常驻动作
+        // （点它直接开创建弹窗）；导入源改由紧邻的 sidebar-workspace-actions chevron 菜单承载。
+        // 旧菜单项 sidebar-add-workspace 不得复活。菜单项未展开时不在 DOM ⇒ 展开 → 量 → 关闭。
         const trigger = page.locator('[data-testid="sidebar-new-workspace"]');
         const triggerCount = await trigger.count();
         expect
@@ -1558,49 +1556,65 @@ async function runMatrix(
         const triggerBox = triggerCount > 0 ? await trigger.first().boundingBox() : null;
         expect.soft(newChat, `${tag} ⑥未找到 [data-testid=sidebar-new-chat]`).not.toBeNull();
 
-        // E1 / E1a：展开区头动作菜单后量 menu 项命中区（命中区 ≥32×32，恒常下限 28×28），断完即关。
+        // task-1023：一步直达后不再有「添加 Workspace」菜单行。
+        expect
+            .soft(
+                await page.locator('[data-testid="sidebar-add-workspace"]').count(),
+                `${tag} ⑥旧「添加 Workspace」菜单项仍在（task-1023 一步直达后应为 0）`,
+            )
+            .toBe(0);
+
+        // E1 / E1a：区头动作簇 ≥32×32；导入源菜单行另按浮层口径量，断完即关。
         const menuItem = (testId: string) => page.locator(`[data-testid="${testId}"]`);
-        let addWsBox: { width: number; height: number } | null = null;
         let importSourceBox: { width: number; height: number } | null = null;
-        let addWsEnabled = false;
         let importSourceEnabled = false;
+        const actionsTrigger = page.locator('[data-testid="sidebar-workspace-actions"]');
         if (triggerBox) {
-            await trigger
-                .first()
-                .click({ timeout: 5000 })
-                .catch(() => {});
-            await menuItem("sidebar-add-workspace")
-                .first()
-                .waitFor({ state: "visible", timeout: 5000 })
-                .catch(() => {});
-            addWsBox = await menuItem("sidebar-add-workspace")
+            const triggerMin = Math.min(triggerBox.width, triggerBox.height);
+            expect
+                .soft(
+                    triggerMin,
+                    `${tag} ⑥E1 新建工作区命中区 ${fmt(triggerBox.width)}×${fmt(triggerBox.height)}（阈值 ≥${ACTION_CLUSTER_MIN_PX}×${ACTION_CLUSTER_MIN_PX}）`,
+                )
+                .toBeGreaterThanOrEqual(ACTION_CLUSTER_MIN_PX);
+            const actionsBox = await actionsTrigger
                 .first()
                 .boundingBox()
                 .catch(() => null);
+            expect
+                .soft(
+                    actionsBox ? Math.min(actionsBox.width, actionsBox.height) : 0,
+                    `${tag} ⑥E1 导入源菜单触发器命中区（阈值 ≥${ACTION_CLUSTER_MIN_PX}×${ACTION_CLUSTER_MIN_PX}）`,
+                )
+                .toBeGreaterThanOrEqual(ACTION_CLUSTER_MIN_PX);
+            await actionsTrigger
+                .first()
+                .click({ timeout: 5000 })
+                .catch(() => {});
+            await menuItem("sidebar-import-source")
+                .first()
+                .waitFor({ state: "visible", timeout: 5000 })
+                .catch(() => {});
             importSourceBox = await menuItem("sidebar-import-source")
                 .first()
                 .boundingBox()
                 .catch(() => null);
-            addWsEnabled = await menuItem("sidebar-add-workspace")
-                .first()
-                .isEnabled()
-                .catch(() => false);
             importSourceEnabled = await menuItem("sidebar-import-source")
                 .first()
                 .isEnabled()
                 .catch(() => false);
             expect
                 .soft(
-                    { addWsBox, importSourceBox: importSourceBox !== null },
-                    `${tag} ⑥E1 展开 sidebar-new-workspace 菜单后仍取不到 sidebar-add-workspace / sidebar-import-source（菜单内容未渲染，属空覆盖 ⇒ 必须红）`,
+                    { importSourceBox: importSourceBox !== null },
+                    `${tag} ⑥E1 展开 sidebar-workspace-actions 菜单后仍取不到 sidebar-import-source（菜单内容未渲染，属空覆盖 ⇒ 必须红）`,
                 )
-                .toEqual({ addWsBox: expect.anything(), importSourceBox: true });
+                .toEqual({ importSourceBox: true });
             await page.keyboard.press("Escape").catch(() => {});
-            await menuItem("sidebar-add-workspace")
+            await menuItem("sidebar-import-source")
                 .first()
                 .waitFor({ state: "detached", timeout: 5000 })
                 .catch(() => {});
-            const menuStillOpen = await menuItem("sidebar-add-workspace").count();
+            const menuStillOpen = await menuItem("sidebar-import-source").count();
             expect
                 .soft(
                     menuStillOpen,
@@ -1613,7 +1627,7 @@ async function runMatrix(
         // 类别              | 例子                                            | 阈值
         // 常驻动作（chrome） | sidebar-new-chat / sidebar-new-workspace        | ≥28×28（E1a）；
         //                   |                                                 | 区头动作簇 ≥32×32（E1，D-1907 C）
-        // 浮层菜单行         | sidebar-add-workspace / sidebar-import-source    | 可见 + 可用 + 高 ≥20px + 宽 ≥120px
+        // 浮层菜单行         | sidebar-import-source                           | 可见 + 可用 + 高 ≥20px + 宽 ≥120px
         //
         // 为什么按类分开：28/32 是**常驻 chrome 的可点面积门**，防的是「图标退化成点不到」；下拉菜单行不是
         // 常驻动作，套同一阈值测的是另一件事（触摸目标尺寸），而本项目没有该 D 级口径 —— 菜单行 =
@@ -1654,13 +1668,8 @@ async function runMatrix(
             // E1（浮层菜单行口径，见判定表）：可见 + 可用 + 高 ≥20 + 宽 ≥120 —— **不再套** 28/32。
             // 这三项原来套的是常驻动作的 28/32，且因旧写法取不到元素而**从未真正执行**（空覆盖）；task-149
             // 修好展开流程后它们首次执行，暴露的是「27.7px < 28」这种跨类误判，故按 Lead 裁定改成按类判定。
+            // task-1023：新建工作区已是一步直达的常驻动作（上面按 32×32 量），浮层只剩导入源。
             const menuRows = [
-                {
-                    testId: "sidebar-add-workspace",
-                    label: "新建工作区",
-                    box: addWsBox,
-                    enabled: addWsEnabled,
-                },
                 {
                     testId: "sidebar-import-source",
                     label: "导入源",

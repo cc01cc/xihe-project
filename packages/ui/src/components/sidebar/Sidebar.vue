@@ -3,6 +3,7 @@ import { computed, nextTick, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import {
+    ChevronDown,
     CircleUser,
     FolderOpen,
     FolderTree,
@@ -362,29 +363,34 @@ function handleLogout() {
                 <!--
                     task-89 ①：区头三个动作**常驻可见**（32px 命中区、gap-1.5、hover 底、aria-label），
                     一律不做「hover 才出现」—— hover-only 在触摸与键盘下等于不存在。
-                    新建工作区仍是一级列表动作（导入源是它的同级菜单项，不是第二个图标），
-                    与工作区行上的 +（在该组新建会话）语义分开（D-1206）。
+                    task-1023（2026-11-24 用户裁定）：「新建工作区」一步直达 —— `+` 本身直接打开
+                    创建弹窗（旧实现是 `+` → 菜单 →「添加 Workspace」两步）。导入源不再是它的
+                    同级菜单项，而是紧邻的独立 chevron 菜单（仍是一级列表动作）；与工作区行上的
+                    `+`（在该组新建会话）语义分开（D-1206）。
                 -->
+                <button
+                    type="button"
+                    data-testid="sidebar-new-workspace"
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :aria-label="t('workspace.addWorkspace')"
+                    :title="t('workspace.addWorkspace')"
+                    @click="openAddWorkspace"
+                >
+                    <Plus class="size-4" aria-hidden="true" />
+                </button>
                 <DropdownMenu>
                     <DropdownMenuTrigger as-child>
                         <button
                             type="button"
-                            data-testid="sidebar-new-workspace"
+                            data-testid="sidebar-workspace-actions"
                             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            :aria-label="t('workspace.addWorkspace')"
-                            :title="t('workspace.addWorkspace')"
+                            :aria-label="t('sidebar.moreActions')"
+                            :title="t('sidebar.moreActions')"
                         >
-                            <Plus class="size-4" aria-hidden="true" />
+                            <ChevronDown class="size-3.5" aria-hidden="true" />
                         </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" class="w-56">
-                        <DropdownMenuItem
-                            data-testid="sidebar-add-workspace"
-                            @select="openAddWorkspace"
-                        >
-                            <Plus class="size-4" aria-hidden="true" />
-                            {{ t("workspace.addWorkspace") }}
-                        </DropdownMenuItem>
                         <DropdownMenuItem
                             data-testid="sidebar-import-source"
                             @select="openImportSource"

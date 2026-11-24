@@ -405,8 +405,8 @@ describe("Sidebar", () => {
         );
 
         // 栏头承载**列表级**动作 + 折叠（折叠按钮仍在原位）。
-        // task-89 ①：新建工作区与导入源收敛为**一个**常驻 32px 触发器 + 菜单
-        // （菜单 Content 未展开时不渲染，故这里只钉触发器；菜单项由 task-89 用例开菜单后钉）。
+        // task-1023：「新建工作区」是**一步直达**的常驻 32px 按钮；导入源在紧邻的 chevron
+        // 菜单里（菜单 Content 未展开时不渲染，故这里只钉触发器；菜单项由 task-89 用例钉）。
         expect(header.find('[data-testid="sidebar-new-workspace"]').exists()).toBe(true);
         expect(header.find('[data-testid="sidebar-collapse"]').exists()).toBe(true);
 
@@ -513,7 +513,7 @@ describe("Sidebar nav yield (PLAN-0582 S5-W2)", () => {
  * 「如果我没做」这条会怎么红：区头不存在 ⇒ ①② 直接找不到 testid；语义混用 ⇒ ③ 的 aria-label 对不上。
  */
 describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
-    it("task-89 ①：新建工作区 + 导入源收敛为一个常驻 32px 触发器 + 菜单", async () => {
+    it("task-89 ① / task-1023：新建工作区一步直达，导入源在独立 chevron 菜单", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
         const trigger = wrapper.get('[data-testid="sidebar-new-workspace"]');
@@ -525,9 +525,13 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
 
         await trigger.trigger("click");
         await flushPromises();
-        expect(wrapper.get('[data-testid="sidebar-add-workspace"]').text()).toContain(
-            zhSource.workspace.addWorkspace,
-        );
+        // task-1023：一次点击直接开创建弹窗，不再要求点菜单项。
+        expect(wrapper.find('[data-testid="workspace-create-dialog"]').exists()).toBe(true);
+
+        const actions = wrapper.get('[data-testid="sidebar-workspace-actions"]');
+        expect(actions.attributes("aria-label")).toBe(zhSource.sidebar.moreActions);
+        await actions.trigger("click");
+        await flushPromises();
         expect(wrapper.get('[data-testid="sidebar-import-source"]').text()).toContain(
             zhSource.workspace.importSource,
         );
@@ -554,8 +558,6 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
 
         await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
         await flushPromises();
-        await wrapper.get('[data-testid="sidebar-add-workspace"]').trigger("click");
-        await flushPromises();
 
         expect(wrapper.find('[data-testid="workspace-create-dialog"]').exists()).toBe(true);
         expect(pushSpy).not.toHaveBeenCalled();
@@ -569,8 +571,6 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
 
         await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
         await flushPromises();
-        await wrapper.get('[data-testid="sidebar-add-workspace"]').trigger("click");
-        await flushPromises();
 
         expect(wrapper.find('[data-testid="workspace-create-dialog"]').exists()).toBe(true);
         fetchSpy.mockRestore();
@@ -582,7 +582,7 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
         const wrapper = await mountSidebar();
         expect(wrapper.find('[data-testid="workspace-import-dialog"]').exists()).toBe(false);
 
-        await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
+        await wrapper.get('[data-testid="sidebar-workspace-actions"]').trigger("click");
         await flushPromises();
         await wrapper.get('[data-testid="sidebar-import-source"]').trigger("click");
         await flushPromises();
@@ -600,7 +600,7 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
         mockAuth("");
         const wrapper = await mountSidebar();
 
-        await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
+        await wrapper.get('[data-testid="sidebar-workspace-actions"]').trigger("click");
         await flushPromises();
         await wrapper.get('[data-testid="sidebar-import-source"]').trigger("click");
         await flushPromises();

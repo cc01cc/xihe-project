@@ -5,6 +5,7 @@ import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { LAYER_DOMAINS } from "../../../stores/config";
 import { instanceOpsGroups, navItemsForLayer } from "../../../lib/settingsIa";
 import SettingsSidebar from "../SettingsSidebar.vue";
+import { SidebarMenuButton } from "@/components/ui/sidebar";
 
 /**
  * PLAN-0752 T1.6 / V15：左栏 = 层内二级。
@@ -52,7 +53,7 @@ vi.mock("vue-router", () => ({
         }) as unknown as RouteLocationNormalizedLoaded,
     RouterLink: {
         props: { to: { type: [String, Object], required: false, default: "" } },
-        template: "<a :data-to='String(to)'><slot /></a>",
+        template: "<a :to='String(to)' :data-to='String(to)'><slot /></a>",
     },
 }));
 
@@ -401,6 +402,29 @@ describe("SettingsSidebar", () => {
         expect(wrapper.html()).not.toContain("16rem");
         expect(document.cookie).toBe(before);
         expect(document.cookie).not.toContain("sidebar_state");
+    });
+
+    /**
+     * task-1023：首击被吞的根因链是 `SidebarMenuButton as-child` + 内联 `<router-link>` ——
+     * reka `Primitive` 的 `Slot` 会 `cloneVNode`，点击处理器与 `to` 落在克隆 vnode 上。
+     * 条目必须改为 `:as="RouterLink"`（直接渲染根组件，无克隆层）。
+     *
+     * 反证：把任一条目改回 `as-child` + 内联 router-link ⇒ 本用例立刻红。
+     */
+    it("task-1023: every settings entry renders RouterLink directly (no asChild clone path)", () => {
+        state.capability = true;
+        state.canManageRoles = true;
+        const wrapper = mountSidebar("instance", "rag");
+        const buttons = wrapper.findAllComponents(SidebarMenuButton);
+        expect(buttons.length).toBeGreaterThan(0);
+        for (const button of buttons) {
+            expect(
+                button.props("asChild"),
+                "asChild reintroduces the Slot clone path that swallowed the first click",
+            ).toBeFalsy();
+            expect(button.props("as"), "entry must render a RouterLink root").toBeTruthy();
+            expect(button.attributes("to")).toBeTruthy();
+        }
     });
 
     it("层组次序 = 高 → 低（instance → user → workspace-default）", async () => {

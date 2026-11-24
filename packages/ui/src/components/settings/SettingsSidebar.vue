@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch, type Component } from "vue";
+import { computed, markRaw, onMounted, ref, watch, type Component } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import {
     Activity,
     Bot,
@@ -81,6 +81,12 @@ import {
  *   `data-slot="sidebar-menu-button"` 这族标记，而 `collapsible="none"` 也用不到 tooltip）。
  *   vendor 升级时按 spike 文档 §「vendor 升级耦合点」五处 grep + 跑 `settings-sidebar-context.spec.ts`。
  *
+ * - **task-1023（首击被吞）**：条目**不再**用 `SidebarMenuButton as-child` + 内联 `<router-link>`。
+ *   `as-child` 走 reka `Primitive` 的 Slot `cloneVNode` 路径：点击处理器与 `to` 挂在**克隆出来的
+ *   vnode** 上，冻结构建上首击出现「只获焦、不导航」（第二次才进）。改为 `:as="RouterLinkComponent"`：
+ *   `Primitive` 直接把 `RouterLink` 当根组件渲染，事件与 `to` 落在同一个组件实例上，没有克隆层。
+ *   视觉/`data-slot`/键盘行为不变（仍然是一个 `<a href>`）。
+ *
  * - **滚动与截断**（task-227 ⑨ 类 H-02 / H-08）：左栏滚动换 vendor `ScrollArea`（原 `nav` 自带的
  *   `overflow-y-auto` 原生滚动条）；层组标题与条目标签 `truncate` 处一律补 `:title`，截断后信息可恢复。
  * 权限面（V15）：实例块（域 + 实例资源）可见性来自 CP 投影的 cap:instance:admin 能力位
@@ -91,6 +97,13 @@ import {
 const { t } = useI18n();
 const route = useRoute();
 const auth = useAuthStore();
+
+/**
+ * task-1023：`:as="RouterLinkComponent"` 会进 `SidebarMenuButton` 的 `reactiveOmit(props, …)`（对象变
+ * reactive），Vue 会对组件对象报 `Component that was made a reactive object`。组件引用不需要
+ * 响应式，`markRaw` 是官方建议的写法（只标记一次，不改渲染结果）。
+ */
+const RouterLinkComponent = markRaw(RouterLink);
 
 /**
  * (A) 方案的手工侧栏 context（见文件头注释的三条副作用依据）。
@@ -394,7 +407,9 @@ const layerHeaderClass =
                                 >
                                     <SidebarMenuItem v-for="item in instanceDomains" :key="item.id">
                                         <SidebarMenuButton
-                                            as-child
+                                            :as="RouterLinkComponent"
+                                            :to="item.path"
+                                            :data-testid="'settings-nav-domain-instance-' + item.id"
                                             :is-active="isDomainActive('instance', item.id)"
                                             :class="[
                                                 itemBaseClass,
@@ -403,23 +418,16 @@ const layerHeaderClass =
                                                     : itemIdleClass,
                                             ]"
                                         >
-                                            <router-link
-                                                :to="item.path"
-                                                :data-testid="
-                                                    'settings-nav-domain-instance-' + item.id
-                                                "
+                                            <component
+                                                :is="iconFor(DOMAIN_ICONS, item.id)"
+                                                :class="itemIconClass"
+                                                aria-hidden="true"
+                                            />
+                                            <span
+                                                class="min-w-0 truncate"
+                                                :title="t(item.labelKey)"
+                                                >{{ t(item.labelKey) }}</span
                                             >
-                                                <component
-                                                    :is="iconFor(DOMAIN_ICONS, item.id)"
-                                                    :class="itemIconClass"
-                                                    aria-hidden="true"
-                                                />
-                                                <span
-                                                    class="min-w-0 truncate"
-                                                    :title="t(item.labelKey)"
-                                                    >{{ t(item.labelKey) }}</span
-                                                >
-                                            </router-link>
                                         </SidebarMenuButton>
                                     </SidebarMenuItem>
                                 </SidebarMenu>
@@ -444,7 +452,9 @@ const layerHeaderClass =
                                     >
                                         <SidebarMenuItem v-for="item in group.items" :key="item.id">
                                             <SidebarMenuButton
-                                                as-child
+                                                :as="RouterLinkComponent"
+                                                :to="item.path"
+                                                :data-testid="'settings-nav-ops-' + item.id"
                                                 :is-active="isOpsActive(item.path)"
                                                 :class="[
                                                     itemBaseClass,
@@ -453,21 +463,16 @@ const layerHeaderClass =
                                                         : itemIdleClass,
                                                 ]"
                                             >
-                                                <router-link
-                                                    :to="item.path"
-                                                    :data-testid="'settings-nav-ops-' + item.id"
+                                                <component
+                                                    :is="iconFor(OPS_ICONS, item.id)"
+                                                    :class="itemIconClass"
+                                                    aria-hidden="true"
+                                                />
+                                                <span
+                                                    class="min-w-0 truncate"
+                                                    :title="t(item.labelKey)"
+                                                    >{{ t(item.labelKey) }}</span
                                                 >
-                                                    <component
-                                                        :is="iconFor(OPS_ICONS, item.id)"
-                                                        :class="itemIconClass"
-                                                        aria-hidden="true"
-                                                    />
-                                                    <span
-                                                        class="min-w-0 truncate"
-                                                        :title="t(item.labelKey)"
-                                                        >{{ t(item.labelKey) }}</span
-                                                    >
-                                                </router-link>
                                             </SidebarMenuButton>
                                         </SidebarMenuItem>
                                     </SidebarMenu>
@@ -522,7 +527,9 @@ const layerHeaderClass =
                             >
                                 <SidebarMenuItem v-for="item in userDomains" :key="item.id">
                                     <SidebarMenuButton
-                                        as-child
+                                        :as="RouterLinkComponent"
+                                        :to="item.path"
+                                        :data-testid="'settings-nav-domain-user-' + item.id"
                                         :is-active="isDomainActive('user', item.id)"
                                         :class="[
                                             itemBaseClass,
@@ -531,21 +538,14 @@ const layerHeaderClass =
                                                 : itemIdleClass,
                                         ]"
                                     >
-                                        <router-link
-                                            :to="item.path"
-                                            :data-testid="'settings-nav-domain-user-' + item.id"
-                                        >
-                                            <component
-                                                :is="iconFor(DOMAIN_ICONS, item.id)"
-                                                :class="itemIconClass"
-                                                aria-hidden="true"
-                                            />
-                                            <span
-                                                class="min-w-0 truncate"
-                                                :title="t(item.labelKey)"
-                                                >{{ t(item.labelKey) }}</span
-                                            >
-                                        </router-link>
+                                        <component
+                                            :is="iconFor(DOMAIN_ICONS, item.id)"
+                                            :class="itemIconClass"
+                                            aria-hidden="true"
+                                        />
+                                        <span class="min-w-0 truncate" :title="t(item.labelKey)">{{
+                                            t(item.labelKey)
+                                        }}</span>
                                     </SidebarMenuButton>
                                 </SidebarMenuItem>
                             </SidebarMenu>
@@ -606,7 +606,11 @@ const layerHeaderClass =
                                     :key="item.id"
                                 >
                                     <SidebarMenuButton
-                                        as-child
+                                        :as="RouterLinkComponent"
+                                        :to="item.path"
+                                        :data-testid="
+                                            'settings-nav-domain-workspace-default-' + item.id
+                                        "
                                         :is-active="isDomainActive('workspace-default', item.id)"
                                         :class="[
                                             itemBaseClass,
@@ -615,23 +619,14 @@ const layerHeaderClass =
                                                 : itemIdleClass,
                                         ]"
                                     >
-                                        <router-link
-                                            :to="item.path"
-                                            :data-testid="
-                                                'settings-nav-domain-workspace-default-' + item.id
-                                            "
-                                        >
-                                            <component
-                                                :is="iconFor(DOMAIN_ICONS, item.id)"
-                                                :class="itemIconClass"
-                                                aria-hidden="true"
-                                            />
-                                            <span
-                                                class="min-w-0 truncate"
-                                                :title="t(item.labelKey)"
-                                                >{{ t(item.labelKey) }}</span
-                                            >
-                                        </router-link>
+                                        <component
+                                            :is="iconFor(DOMAIN_ICONS, item.id)"
+                                            :class="itemIconClass"
+                                            aria-hidden="true"
+                                        />
+                                        <span class="min-w-0 truncate" :title="t(item.labelKey)">{{
+                                            t(item.labelKey)
+                                        }}</span>
                                     </SidebarMenuButton>
                                 </SidebarMenuItem>
                             </SidebarMenu>

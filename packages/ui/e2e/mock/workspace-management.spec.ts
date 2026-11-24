@@ -1,5 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
-import { expect, test } from "./helpers/mock-test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
@@ -249,6 +249,15 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
  * 只钉前者会让「两处并存」这种半成品一路绿；只钉后者会让「搬没了」一路绿。
  */
 test.describe("Workspace chrome entries live in the rail section header (task-365 B)", () => {
+    // 创建/导入弹窗会探测系统根目录与 MXC 快照；本节只判入口一次点击能开弹窗。
+    test.use({
+        mockAllow: [
+            ...DEFAULT_MOCK_ALLOW,
+            String.raw`/api/v1/workspaces/(import-source-roots|mxc-install)`,
+            String.raw`Workspace system root discovery failed`,
+        ],
+    });
+
     // 独立 describe **不继承**上面那个 describe 的 beforeEach —— 少了这一步整块跑在登录页上
     // （实测：`sidebar-import-source` not found，快照里是「登录」标题）。
     test.beforeEach(async ({ page }) => {
@@ -263,11 +272,12 @@ test.describe("Workspace chrome entries live in the rail section header (task-36
         page,
     }) => {
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
-        await expect(page.getByTestId("sidebar-add-workspace")).toBeVisible();
+        await expect(page.getByTestId("sidebar-new-workspace")).toBeVisible();
         await expect(page.getByTestId("workspace-toolbar-add")).toHaveCount(0);
         await expect(page.getByTestId("workspace-toolbar-more-add-workspace")).toHaveCount(0);
 
-        await page.getByTestId("sidebar-add-workspace").click();
+        // task-1023：区头 `+` 一步直达创建弹窗。
+        await page.getByTestId("sidebar-new-workspace").click();
         await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -279,9 +289,11 @@ test.describe("Workspace chrome entries live in the rail section header (task-36
         page,
     }) => {
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
-        await expect(page.getByTestId("sidebar-import-source")).toBeVisible();
+        await expect(page.getByTestId("sidebar-workspace-actions")).toBeVisible();
         await expect(page.getByTestId("workspace-toolbar-import-source")).toHaveCount(0);
 
+        await page.getByTestId("sidebar-workspace-actions").click();
+        await expect(page.getByTestId("sidebar-import-source")).toBeVisible();
         await page.getByTestId("sidebar-import-source").click();
         await expect(page.getByTestId("workspace-import-dialog")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,

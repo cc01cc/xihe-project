@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
-import { clickSidebarActionMenuItem } from "./helpers/sidebar-menu";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
@@ -158,8 +157,8 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
         );
         seedPage(page);
         await page.goto(`/workspace/${seedWs}`);
-        // task-149：菜单项在 DropdownMenuContent 内，未展开时不在 DOM ⇒ 必须先展开区头菜单。
-        await clickSidebarActionMenuItem(page, "sidebar-add-workspace");
+        // task-1023：区头 `+` 一步直达创建弹窗（不再经过菜单）。
+        await page.getByTestId("sidebar-new-workspace").click();
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeVisible();
 
         await page.locator('[data-testid="workspace-storage-direct"]').click();
