@@ -107,10 +107,11 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <!-- PLAN-0633: batch A1 pinned 42.7.14 because Spring Boot 4.0.6's BOM managed 42.7.10
-                 (that pin carried the two-CVE fix). Spring Boot 4.1.2's BOM manages 42.7.14 itself,
-                 so batch B removes the pin per the A1 note ("remove once the BOM manages >= 42.7.14");
-                 `mvn dependency:list` confirms 42.7.14 is still what resolves. -->
+            <!-- PLAN-0633 A1 pinned 42.7.14 for the two-CVE fix; batch B removed the pin once
+                 Spring Boot 4.1.2's BOM managed >= 42.7.14. task-1038 re-adds an explicit pin
+                 at 42.7.15 (2026-11-23) because the 4.1.2 BOM still resolves 42.7.14; drop the
+                 pin again once the parent BOM manages >= 42.7.15. -->
+            <version>42.7.15</version>
             <scope>runtime</scope>
         </dependency>
         
@@ -194,7 +195,7 @@
                  every config-schemas/*.json domain with this library, and `hooks: null` is a supported
                  document shape (V98 rollback), so `AgentTemplateHooksSchemaTest` carries an explicit
                  nullable probe. -->
-            <version>3.0.8</version>
+            <version>3.0.9</version>
         </dependency>
 
         <!-- PDFBox (PDF splitting) -->
