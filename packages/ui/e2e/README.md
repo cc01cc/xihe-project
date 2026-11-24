@@ -58,6 +58,28 @@ node -e "const s=require('./packages/ui/e2e/.mock-report.json').stats;console.lo
 
 ## 公共桩：**工作台任意用例都会打 `git-status`**（task-65 收尾段，2026-11-17）
 
+## 全局导航点击可靠性（task-1021，`e2e/mock/nav-click-reliability.spec.ts`）
+
+**钉住的行为**（task-1012 的根因，已修复）：
+
+- 二级菜单开着 → 点另一个 rail 模块，**一次点击**就落地（reka `DropdownMenu` 必须 `modal=false`；
+  判据同时断言菜单打开期间 `body.pointerEvents === "auto"`，不读 reka 内部字段）；
+- 展开态点模块行按钮右缘 14px 必须导航，不是只开二级菜单（chevron 不得 `absolute` 压住行命中区）；
+- 同一个事件循环内连点两个模块，最终 URL = **最后一次**点击目标。
+
+**运行**（无头是默认；不需要真栈，mock 数据集由 `setupMockAuth` 提供）：
+
+```powershell
+cd H:\zeogit\one\A03-xihe\packages\ui
+pnpm test:e2e:nav-click                 # 单跑本 spec
+pnpm test:e2e                           # 全量 e2e（本 spec 已被 testMatch 收进来）
+$env:XIHE_E2E_HEADED="1"; pnpm test:e2e:nav-click   # 需目视时显式开有头
+```
+
+**反例输入**（证明它不是假绿）：去掉 `GlobalRailModule.vue` 的 `:modal="false"` ⇒ 第 1 条红；
+把 chevron 改回 `absolute` 并去掉独立列 ⇒ 第 2 条红。读数见
+`internal/A03-xihe/evidence/2026-11-24-nav-click-e2e/`。
+
 **规则（新增工作台 spec 必须核这条）**：自 `D-1777` / `D-1778` 起，文件树是右栏 `files` 面板，
 宽屏首启就是 active 页签 ⇒ **任何挂到 `/workspace/**` 的用例**一进页面就会发
 `GET /api/v1/workspaces/{id}/git-status`（`FileTreePanel.vue` → `useWorkspaceGitReadState`）。
