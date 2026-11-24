@@ -117,7 +117,14 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
         assertFalse(body.containsKey("scope"),
                 "D-174 removed the principal tier from the wire (no `scope` in AgentPrincipalView)");
         assertEquals(null, body.get("ownerUserId"));
-        assertFalse(body.containsKey("systemPrompt"));
+        // task-1002 (follow-up of task-974 / R35): the persona key is part of the create echo.
+        // Fixture appends no persona, so the value must be the *built-in default template* persona
+        // (non-null, non-blank) — the wire may not omit the key, and may not synthesize a different
+        // string than what the frozen snapshot holds.
+        assertTrue(body.containsKey("systemPrompt"),
+                "task-974/R35: AgentPrincipalWireView always projects the persona key: " + body);
+        assertTrue(body.get("systemPrompt") instanceof String persona && !persona.isBlank(),
+                "the built-in default template persona is not empty: " + body);
         assertFalse(body.containsKey("provider"));
 
         UUID principalId = UUID.fromString((String) body.get("principalId"));
@@ -125,6 +132,10 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
         assertEquals("BareDefaultAgent", principal.getName());
         assertEquals(userId.toString(), principal.getCreatedByUserId());
         assertTrue(principal.getTemplateSnapshot().path("templateName").isNull());
+        // task-1002: the echo is the persisted value, not a re-derived default — same key, same text.
+        assertEquals(principal.getTemplateSnapshot().path("systemPrompt").asText(),
+                body.get("systemPrompt"),
+                "the create echo projects template_snapshot.systemPrompt verbatim: " + body);
         // 默认模板快照 = 调用者物化原子集（instance USER 默认集 ∪ workspace 环 ∪ 本次授予的管理原子），
         // 集合全部从角色目录派生，不写字面量。注意：夹具把被测用户绑成 MEMBER，而 PLAN-0559 起
         // MEMBER/ADMIN 规范化为 **EDITOR**，所以工作区环是 WS_EDITOR 的原子集。

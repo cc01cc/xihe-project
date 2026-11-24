@@ -475,10 +475,21 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
                 .filter(item -> principalId.toString().equals(String.valueOf(item.get("principalId"))))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("the principal is missing from its own list"));
-        // One projection, one wire shape: the whole row (all 13 keys) is identical, so a consumer
-        // that renders a list row cannot drift from the single read.
+        // One projection, one wire shape: the whole row is identical, so a consumer that renders a
+        // list row cannot drift from the single read.
         assertEquals(listRow, read.getBody(), "task-195: the single read is the list projection");
-        assertEquals(13, read.getBody().size(), read.getBody().toString());
+        // task-1002 (follow-up of task-974 / R35): the persona key joined the projection, so the
+        // field set is pinned BY NAME (a bare `size() == 14` would let any key swap pass unnoticed).
+        java.util.Set<String> expectedKeys = java.util.Set.of(
+                "principalId", "name", "templateId", "templateName", "createdAt", "ownerUserId",
+                "ownership", "defaultModelProvider", "defaultModelName", "allowedModels",
+                "disabledAt", "hooks", "contextPolicy", "systemPrompt");
+        assertEquals(expectedKeys, new java.util.LinkedHashSet<>(read.getBody().keySet()),
+                "the list/single projection field set: " + read.getBody());
+        assertTrue(read.getBody().containsKey("systemPrompt"),
+                "task-974/R35: the persona key is on the wire: " + read.getBody());
+        assertTrue(read.getBody().get("systemPrompt") instanceof String persona && !persona.isBlank(),
+                "the built-in default template persona is not empty on the read face: " + read.getBody());
     }
 
     @Test
