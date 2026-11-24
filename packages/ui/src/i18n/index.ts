@@ -3146,6 +3146,12 @@ const messages = {
                 statusDraft: "草稿",
                 statusPublished: "已发布",
                 inherit: "继承连接默认模板",
+                builtinSuffix: "（内置）",
+                builtinReadonly: "内置模板只读。需要修改时，请复制为我的模板。",
+                copyToMine: "复制为我的模板",
+                copyName: "{name} 副本",
+                copyDescription: "基于内置模板复制，可自由修改。",
+                copied: "已复制为草稿，编辑后保存即可。",
             },
             contextTemplate: {
                 new: "新建模板",
@@ -4049,6 +4055,11 @@ const messages = {
             principalNamePattern: "只能使用英文字母、中文汉字或数字，且不能以数字开头（不含空格）",
             usernameTooLong: "用户名最长 32 个字符",
             nameAllowed: "允许：英文字母 / 中文汉字 / 数字，且不能以数字开头",
+            fieldRequired: "此项不能为空",
+            nameTooLong: "名称最长 120 个字符",
+            pathTooLong: "路径过长（最多 1024 个字符）",
+            descriptionTooLong: "描述最长 500 个字符",
+            controlCharacter: "不能包含换行、制表等控制字符",
         },
         common: {
             loading: "加载中...",
@@ -7686,6 +7697,13 @@ const messages = {
                 statusDraft: "Draft",
                 statusPublished: "Published",
                 inherit: "Inherit connection default",
+                builtinSuffix: " · Built-in",
+                builtinReadonly:
+                    "Built-in templates are read-only. Copy one to make an editable template.",
+                copyToMine: "Copy as my template",
+                copyName: "Copy of {name}",
+                copyDescription: "Copied from a built-in template; edit it freely.",
+                copied: "Copied as a draft; edit and save it.",
             },
             contextTemplate: {
                 new: "New template",
@@ -8637,6 +8655,11 @@ const messages = {
             usernameTooLong: "Username must be at most 32 characters",
             nameAllowed:
                 "Allowed: letters / Chinese characters / digits, not starting with a digit",
+            fieldRequired: "This field is required",
+            nameTooLong: "Name must be at most 120 characters",
+            pathTooLong: "Path is too long (max 1024 characters)",
+            descriptionTooLong: "Description must be at most 500 characters",
+            controlCharacter: "Must not contain control characters such as newlines or tabs",
         },
         common: {
             loading: "Loading...",

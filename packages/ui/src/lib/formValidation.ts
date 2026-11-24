@@ -20,6 +20,9 @@ export type FormFieldRuleId =
     | "provider.connectionKey"
     | "provider.label"
     | "provider.modelDiscoveryUrl"
+    | "workspace.name"
+    | "workspace.rootPath"
+    | "workspace.description"
     | "principal.name"
     | "username";
 
@@ -145,6 +148,50 @@ export const FORM_FIELD_RULES: Record<FormFieldRuleId, FieldRuleSpec> = {
         },
         messages: {
             invalid: "settings.providerHub.modelDiscoveryUrlInvalid",
+        },
+    },
+    /**
+     * task-957（R13/R24）：工作区创建向导只有一个配置页，名称 / 根目录 / 描述分别在输入时
+     * 即时求值；这里补上工作区域的三条规则，避免该向导成为 `check:form-validation` 的
+     * 未接入增量。CP 侧对 workspace 名称/路径没有额外格式规则，因此只做「必填 + 长度 +
+     * 控制字符」的可本地预判（R24：服务端仍是最终权威）。
+     */
+    "workspace.name": {
+        id: "workspace.name",
+        required: true,
+        trim: true,
+        maxLength: 120,
+        maxLengthUnit: "code-point",
+        forbidControlCharacters: true,
+        messages: {
+            required: "validation.principalNameRequired",
+            "max-length": "validation.nameTooLong",
+            "control-character": "validation.controlCharacter",
+        },
+    },
+    "workspace.rootPath": {
+        id: "workspace.rootPath",
+        required: true,
+        trim: true,
+        maxLength: 1024,
+        maxLengthUnit: "utf16",
+        forbidControlCharacters: true,
+        messages: {
+            required: "validation.fieldRequired",
+            "max-length": "validation.pathTooLong",
+            "control-character": "validation.controlCharacter",
+        },
+    },
+    "workspace.description": {
+        id: "workspace.description",
+        required: false,
+        trim: true,
+        maxLength: 500,
+        maxLengthUnit: "code-point",
+        forbidControlCharacters: true,
+        messages: {
+            "max-length": "validation.descriptionTooLong",
+            "control-character": "validation.controlCharacter",
         },
     },
     "principal.name": {
