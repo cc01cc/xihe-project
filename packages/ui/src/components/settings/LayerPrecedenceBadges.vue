@@ -71,8 +71,18 @@ const badges = computed(() =>
                 t("settings.ia.fourLayerLowToHigh")
             }}</span>
         </div>
-        <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            {{ t("settings.ia.fourLayerDetail") }}
-        </p>
+        <!--
+            task-1022：作用域说明默认收成一行 + 「查看详情」。
+            层序徽标行保持常显（它是判据的一部分）；长解释进折叠，避免每页首屏都被同一段
+            说明占满。`<details>` 不用 v-if ⇒ 文案仍在 DOM 里（既有文案断言不变）。
+        -->
+        <details class="mt-1">
+            <summary class="cursor-pointer text-xs text-muted-foreground">
+                {{ t("settings.ia.fourLayerDetailToggle") }}
+            </summary>
+            <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {{ t("settings.ia.fourLayerDetail") }}
+            </p>
+        </details>
     </div>
 </template>

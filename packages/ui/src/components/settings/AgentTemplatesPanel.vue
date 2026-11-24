@@ -107,6 +107,27 @@ watch(
 
 const editing = computed(() => !!selectedTemplateId.value);
 
+/**
+ * task-1022：枚举人话化。
+ *
+ * 卡片主显示不再直接渲染 wire 值（`none` / `workspace`）；原始值只保留在「技术详情」里，
+ * 供排障与复制。i18n 词表见 `settings.agentTemplateToolMode*`。
+ */
+function toolModeLabel(mode: Template["toolMode"]): string {
+    return mode === "workspace"
+        ? t("settings.agentTemplateToolModeWorkspace")
+        : t("settings.agentTemplateToolModeNone");
+}
+
+/** task-1022：角色名进主显示，UUID 进技术详情；查不到预设时给「不使用预设」而不是空白。 */
+function presetLabel(template: Template): string {
+    if (!template.presetId) return t("settings.agentTemplateNoRole");
+    return (
+        presets.value.find((preset) => preset.id === template.presetId)?.name ??
+        t("settings.agentTemplateNoRole")
+    );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -436,8 +457,12 @@ function cancelPresetEdit() {
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="none">none</SelectItem>
-                            <SelectItem value="workspace">workspace</SelectItem>
+                            <SelectItem value="none">{{
+                                t("settings.agentTemplateToolModeNone")
+                            }}</SelectItem>
+                            <SelectItem value="workspace">{{
+                                t("settings.agentTemplateToolModeWorkspace")
+                            }}</SelectItem>
                         </SelectContent>
                     </Select>
                 </label>
@@ -521,19 +546,43 @@ function cancelPresetEdit() {
             >
                 <div class="min-w-0">
                     <h4 class="truncate text-sm font-medium">{{ template.name }}</h4>
-                    <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
-                        {{ template.id }}
-                    </p>
                     <p class="mt-1 text-xs text-muted-foreground">
-                        {{
-                            template.presetId
-                                ? presets.find((preset) => preset.id === template.presetId)?.name
-                                : t("settings.agentTemplateNoRole")
-                        }}
-                        · {{ template.toolMode }} ·
+                        {{ presetLabel(template) }}
+                        · {{ toolModeLabel(template.toolMode) }} ·
                         {{ template.provider || t("settings.notSet") }} /
                         {{ template.model || t("settings.notSet") }}
                     </p>
+                    <!--
+                        task-1022：UUID / wire 枚举收进「技术详情」折叠（默认收起）。
+                        主显示只留用户能读懂的字段；技术标识仍然可见、可复制，只是不占首屏。
+                    -->
+                    <details class="mt-1" :data-testid="`agent-template-tech-${template.id}`">
+                        <summary class="cursor-pointer text-xs text-muted-foreground">
+                            {{ t("settings.agentTemplateTechDetails") }}
+                        </summary>
+                        <dl class="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                            <div class="flex min-w-0 gap-2">
+                                <dt class="shrink-0">
+                                    {{ t("settings.agentTemplateTechId") }}
+                                </dt>
+                                <dd class="min-w-0 break-all font-mono">{{ template.id }}</dd>
+                            </div>
+                            <div class="flex min-w-0 gap-2">
+                                <dt class="shrink-0">
+                                    {{ t("settings.agentTemplateTechPreset") }}
+                                </dt>
+                                <dd class="min-w-0 break-all">
+                                    {{ presetLabel(template) }}
+                                </dd>
+                            </div>
+                            <div class="flex min-w-0 gap-2">
+                                <dt class="shrink-0">
+                                    {{ t("settings.agentTemplateToolModeRaw") }}
+                                </dt>
+                                <dd class="min-w-0 font-mono">{{ template.toolMode }}</dd>
+                            </div>
+                        </dl>
+                    </details>
                 </div>
                 <div v-if="!readonly" class="flex gap-2">
                     <button

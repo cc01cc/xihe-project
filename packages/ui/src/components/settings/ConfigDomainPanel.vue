@@ -68,6 +68,70 @@ const props = defineProps<{
     effective?: Record<string, string>;
 }>();
 
+interface FieldSection {
+    id: string;
+    labelKey: string;
+    fields: DomainField[];
+    openByDefault: boolean;
+}
+
+/**
+ * task-1022：把平铺字段切成「基础设置 + 三个阈值组」。
+ *
+ * <p>分组键只看 key 形状（`loop*` / `runMax*` / `*Ceiling`），不另建一份字段清单 ——
+ * schema 仍是唯一来源，CP 增删字段时分组自动跟随。非 `agent-runtime` 域只有「基础设置」
+ * 一组且默认展开，页面观感与改前一致。</p>
+ */
+const fieldSections = computed<FieldSection[]>(() => {
+    if (props.domain !== "agent-runtime") {
+        return [
+            {
+                id: "all",
+                labelKey: "settings.configGroupBasic",
+                fields: props.schema,
+                openByDefault: true,
+            },
+        ];
+    }
+    const basic: DomainField[] = [];
+    const loop: DomainField[] = [];
+    const budget: DomainField[] = [];
+    const ceiling: DomainField[] = [];
+    for (const field of props.schema) {
+        if (field.key.endsWith("Ceiling")) ceiling.push(field);
+        else if (field.key.startsWith("loop")) loop.push(field);
+        else if (field.key.startsWith("runMax") || field.key.startsWith("delegationMax")) {
+            budget.push(field);
+        } else basic.push(field);
+    }
+    return [
+        {
+            id: "basic",
+            labelKey: "settings.configGroupBasic",
+            fields: basic,
+            openByDefault: true,
+        },
+        {
+            id: "loop",
+            labelKey: "settings.configGroupLoop",
+            fields: loop,
+            openByDefault: false,
+        },
+        {
+            id: "budget",
+            labelKey: "settings.configGroupBudget",
+            fields: budget,
+            openByDefault: false,
+        },
+        {
+            id: "ceiling",
+            labelKey: "settings.configGroupCeiling",
+            fields: ceiling,
+            openByDefault: false,
+        },
+    ].filter((section) => section.fields.length > 0);
+});
+
 const emit = defineEmits<{
     save: [body: Record<string, string>];
     reset: [key: string];
@@ -748,314 +812,355 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
             >
                 {{ note }}
             </p>
-            <div
-                v-for="field in schema"
-                :key="field.key"
-                :ref="(el) => setRowRef(field.key, el)"
-                :data-testid="`config-field-${domain}-${field.key}`"
-                :tabindex="-1"
-                class="flex min-w-0 items-center gap-2 outline-none"
-                :class="
-                    anchorHighlight === field.key
-                        ? 'rounded ring-2 ring-primary ring-offset-1 ring-offset-background'
-                        : ''
-                "
-            >
-                <div class="min-w-0 w-1/3 text-foreground">
-                    <FieldLabel
-                        :for="hasControl(field) ? controlId(field) : undefined"
-                        class="flex items-center gap-1 text-xs font-normal text-foreground"
+            <!--
+                task-1022：运行时阈值分组折叠。
+
+                `agent-runtime` 有 20+ 个阈值（循环保护 / 运行预算 / 硬上限），平铺时
+                「（未设置）」「代码默认」「仅实例层」重复占满首屏。这里按**展示语义**分组，
+                默认只展开「基础设置」；三个阈值组默认收起。分组只影响渲染，字段、顺序与
+                读写语义不变（同一个 schema 数组，只是切片）。
+
+                用 `<details>` 而不是 `v-if`：折叠态字段仍在 DOM 里 —— 依赖「字段存在」的
+                既有单测继续有效，锚点跳转/清空覆盖等按 key 找行的逻辑也不用改。
+            -->
+            <template v-for="section in fieldSections" :key="section.id">
+                <details
+                    class="rounded-md border"
+                    :open="section.openByDefault"
+                    :data-testid="`config-group-${domain}-${section.id}`"
+                >
+                    <summary
+                        class="cursor-pointer select-none px-2 py-1.5 text-xs text-muted-foreground"
                     >
-                        <span class="block truncate">{{ field.label }}</span>
-                        <span
-                            v-if="isInstanceOnlyField(field)"
-                            :data-testid="`config-key-layer-badge-${domain}-${field.key}`"
-                            class="shrink-0 rounded border border-border px-1 py-0.5 text-xs tracking-wide text-muted-foreground"
-                            :title="t('settings.configKeyInstanceOnlyHint')"
-                            :aria-label="t('settings.configKeyInstanceOnlyHint')"
-                            >{{ t("settings.configKeyInstanceOnlyBadge") }}</span
+                        {{ t(section.labelKey) }} ·
+                        {{ t("settings.configGroupCount", { count: section.fields.length }) }}
+                    </summary>
+                    <div class="space-y-2 p-2">
+                        <div
+                            v-for="field in section.fields"
+                            :key="field.key"
+                            :ref="(el) => setRowRef(field.key, el)"
+                            :data-testid="`config-field-${domain}-${field.key}`"
+                            :tabindex="-1"
+                            class="flex min-w-0 items-center gap-2 outline-none"
+                            :class="
+                                anchorHighlight === field.key
+                                    ? 'rounded ring-2 ring-primary ring-offset-1 ring-offset-background'
+                                    : ''
+                            "
                         >
-                    </FieldLabel>
-                    <FieldDescription
-                        v-if="meta?.[field.key]"
-                        :data-testid="`config-source-${domain}-${field.key}`"
-                        class="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
-                    >
-                        <!-- T2.4：继承层可点（跳到目标层同一条目并聚焦）；生效层保持纯文本 -->
-                        <!-- task-251 / D-1043 B（verify 实读 design.md:105 后裁定 ⓐ）：
+                            <div class="min-w-0 w-1/3 text-foreground">
+                                <FieldLabel
+                                    :for="hasControl(field) ? controlId(field) : undefined"
+                                    class="flex items-center gap-1 text-xs font-normal text-foreground"
+                                >
+                                    <span class="block truncate">{{ field.label }}</span>
+                                    <span
+                                        v-if="isInstanceOnlyField(field)"
+                                        :data-testid="`config-key-layer-badge-${domain}-${field.key}`"
+                                        class="shrink-0 rounded border border-border px-1 py-0.5 text-xs tracking-wide text-muted-foreground"
+                                        :title="t('settings.configKeyInstanceOnlyHint')"
+                                        :aria-label="t('settings.configKeyInstanceOnlyHint')"
+                                        >{{ t("settings.configKeyInstanceOnlyBadge") }}</span
+                                    >
+                                </FieldLabel>
+                                <FieldDescription
+                                    v-if="meta?.[field.key]"
+                                    :data-testid="`config-source-${domain}-${field.key}`"
+                                    class="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
+                                >
+                                    <!-- T2.4：继承层可点（跳到目标层同一条目并聚焦）；生效层保持纯文本 -->
+                                    <!-- task-251 / D-1043 B（verify 实读 design.md:105 后裁定 ⓐ）：
                              badge + 继承说明**必须并存**；缺陷对象只是「两半说同一个层名」。
                              ⇒ 继承行 badge = 来源类型短语（实例默认/工作区覆盖/代码默认），
                              hint = 「继承自上层」（不复述源名）。判定唯一出处 = sourceDisplay()（D-1046）。 -->
-                        <template v-if="sourceDisplay(field.key).showBadge">
-                            <button
-                                v-if="jumpLayer(field.key)"
-                                type="button"
-                                :data-testid="`config-source-jump-${domain}-${field.key}`"
-                                :aria-label="
-                                    sourceDisplay(field.key).hint || sourceDisplay(field.key).badge
-                                "
-                                class="shrink-0 rounded border border-border px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
-                                @click="jumpToSource(field.key)"
-                            >
-                                {{ sourceDisplay(field.key).badge }}
-                            </button>
-                            <span
-                                v-else
-                                class="shrink-0 rounded border border-border px-1 py-0.5"
-                                :aria-label="sourceDisplay(field.key).badge"
-                            >
-                                {{ sourceDisplay(field.key).badge }}
-                            </span>
-                        </template>
-                        <!-- task-31：实例层「被个人层覆盖」——点它跳到用户层同一条目（复用锚点 + 高亮）。
+                                    <template v-if="sourceDisplay(field.key).showBadge">
+                                        <button
+                                            v-if="jumpLayer(field.key)"
+                                            type="button"
+                                            :data-testid="`config-source-jump-${domain}-${field.key}`"
+                                            :aria-label="
+                                                sourceDisplay(field.key).hint ||
+                                                sourceDisplay(field.key).badge
+                                            "
+                                            class="shrink-0 rounded border border-border px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+                                            @click="jumpToSource(field.key)"
+                                        >
+                                            {{ sourceDisplay(field.key).badge }}
+                                        </button>
+                                        <span
+                                            v-else
+                                            class="shrink-0 rounded border border-border px-1 py-0.5"
+                                            :aria-label="sourceDisplay(field.key).badge"
+                                        >
+                                            {{ sourceDisplay(field.key).badge }}
+                                        </span>
+                                    </template>
+                                    <!-- task-31：实例层「被个人层覆盖」——点它跳到用户层同一条目（复用锚点 + 高亮）。
                              只在「本层 = instance 且 user 层对同键有显式行」时出现；user 层未加载时不画，
                              避免把"不知道"画成"没有覆盖"。文案用层名（个人覆盖），不写"被 N 个用户覆盖"。 -->
-                        <button
-                            v-if="userOverrideActive(field.key)"
-                            type="button"
-                            :data-testid="`config-user-override-${domain}-${field.key}`"
-                            :aria-label="t('settings.configSourceUser')"
-                            :title="t('settings.configSourceUser')"
-                            class="shrink-0 rounded border border-border px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
-                            @click="jumpToUserOverride(field.key)"
-                        >
-                            {{ t("settings.configSourceUserOverride") }}
-                        </button>
-                        <span v-if="sourceDisplay(field.key).hint" class="min-w-0 truncate">
-                            {{ sourceDisplay(field.key).hint }}
-                        </span>
-                    </FieldDescription>
-                </div>
+                                    <button
+                                        v-if="userOverrideActive(field.key)"
+                                        type="button"
+                                        :data-testid="`config-user-override-${domain}-${field.key}`"
+                                        :aria-label="t('settings.configSourceUser')"
+                                        :title="t('settings.configSourceUser')"
+                                        class="shrink-0 rounded border border-border px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+                                        @click="jumpToUserOverride(field.key)"
+                                    >
+                                        {{ t("settings.configSourceUserOverride") }}
+                                    </button>
+                                    <span
+                                        v-if="sourceDisplay(field.key).hint"
+                                        class="min-w-0 truncate"
+                                    >
+                                        {{ sourceDisplay(field.key).hint }}
+                                    </span>
+                                </FieldDescription>
+                            </div>
 
-                <template v-if="isLocked(field.key)">
-                    <span
-                        :data-testid="`config-env-lock-${domain}-${field.key}`"
-                        class="min-w-0 flex-1 truncate px-2 py-1 text-sm border rounded bg-muted text-foreground"
-                        :title="t('settings.envLockedHint')"
-                        :aria-label="t('settings.configSourceEnv')"
-                    >
-                        {{
-                            lockedValue(field.key) ||
-                            (isAdminLocked(field.key)
-                                ? t("settings.adminLockValueAtInstance")
-                                : t("settings.empty"))
-                        }}
-                    </span>
-                    <span
-                        class="text-xs tracking-wide px-1.5 py-0.5 rounded border"
-                        :class="
-                            isAdminLocked(field.key)
-                                ? 'border-rose-500/60 text-rose-600'
-                                : 'border-amber-500/60 text-amber-600'
-                        "
-                        :title="
-                            isAdminLocked(field.key)
-                                ? t('settings.adminLockReason', {
-                                      reason: meta?.[field.key]?.lockReason ?? '',
-                                  })
-                                : t('settings.envLockedHint')
-                        "
-                        :data-testid="
-                            isAdminLocked(field.key)
-                                ? `config-admin-lock-${domain}-${field.key}`
-                                : `config-env-lock-chip-${domain}-${field.key}`
-                        "
-                        >{{
-                            isAdminLocked(field.key) ? t("settings.adminLockedBadge") : "env"
-                        }}</span
-                    >
-                </template>
+                            <template v-if="isLocked(field.key)">
+                                <span
+                                    :data-testid="`config-env-lock-${domain}-${field.key}`"
+                                    class="min-w-0 flex-1 truncate px-2 py-1 text-sm border rounded bg-muted text-foreground"
+                                    :title="t('settings.envLockedHint')"
+                                    :aria-label="t('settings.configSourceEnv')"
+                                >
+                                    {{
+                                        lockedValue(field.key) ||
+                                        (isAdminLocked(field.key)
+                                            ? t("settings.adminLockValueAtInstance")
+                                            : t("settings.empty"))
+                                    }}
+                                </span>
+                                <span
+                                    class="text-xs tracking-wide px-1.5 py-0.5 rounded border"
+                                    :class="
+                                        isAdminLocked(field.key)
+                                            ? 'border-rose-500/60 text-rose-600'
+                                            : 'border-amber-500/60 text-amber-600'
+                                    "
+                                    :title="
+                                        isAdminLocked(field.key)
+                                            ? t('settings.adminLockReason', {
+                                                  reason: meta?.[field.key]?.lockReason ?? '',
+                                              })
+                                            : t('settings.envLockedHint')
+                                    "
+                                    :data-testid="
+                                        isAdminLocked(field.key)
+                                            ? `config-admin-lock-${domain}-${field.key}`
+                                            : `config-env-lock-chip-${domain}-${field.key}`
+                                    "
+                                    >{{
+                                        isAdminLocked(field.key)
+                                            ? t("settings.adminLockedBadge")
+                                            : "env"
+                                    }}</span
+                                >
+                            </template>
 
-                <template v-else-if="!readonly && field.type === 'select'">
-                    <!-- task-310：形态回落 vendor `Input` 默认（h-8 / rounded-lg / px-2.5 py-1 / bg-transparent），
+                            <template v-else-if="!readonly && field.type === 'select'">
+                                <!-- task-310：形态回落 vendor `Input` 默认（h-8 / rounded-lg / px-2.5 py-1 / bg-transparent），
                          只保留描边覆盖 —— `--input` 在 5 调色板里 9/10 格不达 WCAG 1.4.11 的 3:1，
                          实测见 evidence/2026-11-13-config-domain-selects/README.md §3。 -->
-                    <Input
-                        v-if="field.allowCustom && customMode[field.key]"
-                        v-model="editing[field.key]"
-                        :id="controlId(field)"
-                        :data-testid="`config-custom-${domain}-${field.key}`"
-                        :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                        class="min-w-0 flex-1"
-                        :placeholder="t('settings.customPlaceholder')"
-                    />
-                    <Select
-                        v-else
-                        :model-value="editing[field.key] ?? ''"
-                        :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                        @update:model-value="
-                            (value) =>
-                                onSelectChange(
-                                    field,
-                                    value === '__unset__' ? '' : String(value ?? ''),
-                                )
-                        "
-                    >
-                        <SelectTrigger
-                            :id="controlId(field)"
-                            :data-testid="`config-select-${domain}-${field.key}`"
-                            class="min-w-0 flex-1"
-                        >
-                            <SelectValue :placeholder="selectPlaceholder(field)" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem v-if="field.allowCustom" value="__unset__">{{
-                                unsetOptionLabel(field)
-                            }}</SelectItem>
-                            <SelectItem
-                                v-if="isDrifted(field) && editing[field.key] !== ''"
-                                :value="editing[field.key]"
+                                <Input
+                                    v-if="field.allowCustom && customMode[field.key]"
+                                    v-model="editing[field.key]"
+                                    :id="controlId(field)"
+                                    :data-testid="`config-custom-${domain}-${field.key}`"
+                                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                                    class="min-w-0 flex-1"
+                                    :placeholder="t('settings.customPlaceholder')"
+                                />
+                                <Select
+                                    v-else
+                                    :model-value="editing[field.key] ?? ''"
+                                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                                    @update:model-value="
+                                        (value) =>
+                                            onSelectChange(
+                                                field,
+                                                value === '__unset__' ? '' : String(value ?? ''),
+                                            )
+                                    "
+                                >
+                                    <SelectTrigger
+                                        :id="controlId(field)"
+                                        :data-testid="`config-select-${domain}-${field.key}`"
+                                        class="min-w-0 flex-1"
+                                    >
+                                        <SelectValue :placeholder="selectPlaceholder(field)" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem v-if="field.allowCustom" value="__unset__">{{
+                                            unsetOptionLabel(field)
+                                        }}</SelectItem>
+                                        <SelectItem
+                                            v-if="isDrifted(field) && editing[field.key] !== ''"
+                                            :value="editing[field.key]"
+                                        >
+                                            {{
+                                                t("settings.driftedOption", {
+                                                    value: editing[field.key],
+                                                })
+                                            }}
+                                        </SelectItem>
+                                        <SelectItem
+                                            v-for="opt in fieldCandidates(field).filter(
+                                                (candidate) => candidate.value !== '',
+                                            )"
+                                            :key="opt.value"
+                                            :value="opt.value"
+                                        >
+                                            {{ opt.label }}
+                                        </SelectItem>
+                                        <SelectItem v-if="field.allowCustom" :value="CUSTOM_OPTION">
+                                            {{ t("settings.customOption") }}
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </template>
+
+                            <JsonFieldEditor
+                                v-else-if="!readonly && field.type === 'json'"
+                                v-model="editing[field.key]"
+                                :control-id="controlId(field)"
+                                :test-id="`config-json-${domain}-${field.key}`"
+                                :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                            />
+
+                            <Textarea
+                                v-else-if="!readonly && field.type === 'textarea'"
+                                v-model="editing[field.key]"
+                                rows="3"
+                                :id="controlId(field)"
+                                :data-testid="`config-textarea-${domain}-${field.key}`"
+                                :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                                class="min-w-0 flex-1"
+                            />
+
+                            <FieldRoot
+                                v-else-if="!readonly && field.type === 'number'"
+                                :name="`config-number-${domain}-${field.key}`"
+                                class="contents"
+                                :validate="numberRule(field)"
+                                :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                                validation-mode="onChange"
                             >
-                                {{ t("settings.driftedOption", { value: editing[field.key] }) }}
-                            </SelectItem>
-                            <SelectItem
-                                v-for="opt in fieldCandidates(field).filter(
-                                    (candidate) => candidate.value !== '',
-                                )"
-                                :key="opt.value"
-                                :value="opt.value"
-                            >
-                                {{ opt.label }}
-                            </SelectItem>
-                            <SelectItem v-if="field.allowCustom" :value="CUSTOM_OPTION">
-                                {{ t("settings.customOption") }}
-                            </SelectItem>
-                        </SelectContent>
-                    </Select>
-                </template>
-
-                <JsonFieldEditor
-                    v-else-if="!readonly && field.type === 'json'"
-                    v-model="editing[field.key]"
-                    :control-id="controlId(field)"
-                    :test-id="`config-json-${domain}-${field.key}`"
-                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                />
-
-                <Textarea
-                    v-else-if="!readonly && field.type === 'textarea'"
-                    v-model="editing[field.key]"
-                    rows="3"
-                    :id="controlId(field)"
-                    :data-testid="`config-textarea-${domain}-${field.key}`"
-                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                    class="min-w-0 flex-1"
-                />
-
-                <FieldRoot
-                    v-else-if="!readonly && field.type === 'number'"
-                    :name="`config-number-${domain}-${field.key}`"
-                    class="contents"
-                    :validate="numberRule(field)"
-                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                    validation-mode="onChange"
-                >
-                    <!-- as-child + vendor `Input`：FieldControl 的校验监听经 mergeProps 落到 input 上，
+                                <!-- as-child + vendor `Input`：FieldControl 的校验监听经 mergeProps 落到 input 上，
                          样式则整体回落 vendor 默认（不再逐个 pixel 手写）。 -->
-                    <FieldControl as-child>
-                        <Input
-                            :model-value="editing[field.key]"
-                            :id="controlId(field)"
-                            :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                            class="min-w-0 flex-1"
-                            type="number"
-                            @update:model-value="(v) => onNumberDraft(field.key, v)"
-                            :max="field.max"
-                            :title="field.max ? `≤ ${field.max}` : undefined"
-                            :data-testid="`config-number-${domain}-${field.key}`"
-                        />
-                    </FieldControl>
-                    <FieldError
-                        class="shrink-0 text-xs text-destructive"
-                        :data-testid="`config-number-error-${domain}-${field.key}`"
-                    />
-                </FieldRoot>
-                <Input
-                    v-else-if="!readonly"
-                    v-model="editing[field.key]"
-                    :id="controlId(field)"
-                    :data-testid="`config-text-${domain}-${field.key}`"
-                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                    class="min-w-0 flex-1"
-                    :type="field.type === 'password' ? 'password' : 'text'"
-                />
+                                <FieldControl as-child>
+                                    <Input
+                                        :model-value="editing[field.key]"
+                                        :id="controlId(field)"
+                                        :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                                        class="min-w-0 flex-1"
+                                        type="number"
+                                        @update:model-value="(v) => onNumberDraft(field.key, v)"
+                                        :max="field.max"
+                                        :title="field.max ? `≤ ${field.max}` : undefined"
+                                        :data-testid="`config-number-${domain}-${field.key}`"
+                                    />
+                                </FieldControl>
+                                <FieldError
+                                    class="shrink-0 text-xs text-destructive"
+                                    :data-testid="`config-number-error-${domain}-${field.key}`"
+                                />
+                            </FieldRoot>
+                            <Input
+                                v-else-if="!readonly"
+                                v-model="editing[field.key]"
+                                :id="controlId(field)"
+                                :data-testid="`config-text-${domain}-${field.key}`"
+                                :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                                class="min-w-0 flex-1"
+                                :type="field.type === 'password' ? 'password' : 'text'"
+                            />
 
-                <!-- task-23 / P2-6：多行值（JSON/textarea）的只读取值不再单行截断；其余类型保持 truncate。 -->
-                <span
-                    v-else
-                    class="min-w-0 flex-1 text-sm"
-                    :class="
-                        isMultilineValueField(field)
-                            ? 'whitespace-pre-wrap break-all max-h-24 overflow-y-auto'
-                            : 'truncate'
-                    "
-                >
-                    {{
-                        field.type === "password"
-                            ? editing[field.key]
-                                ? editing[field.key].substring(0, 3) +
-                                  "****" +
-                                  editing[field.key].slice(-4)
-                                : t("settings.notSet")
-                            : readonlyValueText(field) || t("settings.empty")
-                    }}
-                </span>
+                            <!-- task-23 / P2-6：多行值（JSON/textarea）的只读取值不再单行截断；其余类型保持 truncate。 -->
+                            <span
+                                v-else
+                                class="min-w-0 flex-1 text-sm"
+                                :class="
+                                    isMultilineValueField(field)
+                                        ? 'whitespace-pre-wrap break-all max-h-24 overflow-y-auto'
+                                        : 'truncate'
+                                "
+                            >
+                                {{
+                                    field.type === "password"
+                                        ? editing[field.key]
+                                            ? editing[field.key].substring(0, 3) +
+                                              "****" +
+                                              editing[field.key].slice(-4)
+                                            : t("settings.notSet")
+                                        : readonlyValueText(field) || t("settings.empty")
+                                }}
+                            </span>
 
-                <span
-                    v-if="isDrifted(field)"
-                    :data-testid="`config-drift-${domain}-${field.key}`"
-                    class="shrink-0 text-xs tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
-                    :title="t('settings.driftedHint')"
-                    >{{ t("settings.driftedBadge") }}</span
-                >
-                <!-- 漂移清理与 ↺ 调的是同一个 handler（父层对非实例层发 PUT {key:""}），
+                            <span
+                                v-if="isDrifted(field)"
+                                :data-testid="`config-drift-${domain}-${field.key}`"
+                                class="shrink-0 text-xs tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
+                                :title="t('settings.driftedHint')"
+                                >{{ t("settings.driftedBadge") }}</span
+                            >
+                            <!-- 漂移清理与 ↺ 调的是同一个 handler（父层对非实例层发 PUT {key:""}），
                      所以同样只在能真正删覆盖的实例层出现；徽标保留，用户仍看得到「值不在候选集」，
                      逃生路径是直接选一个合法值再保存。 -->
-                <Button
-                    v-if="
-                        canDeleteOverride &&
-                        isDrifted(field) &&
-                        !fieldReadonly(field) &&
-                        !isLocked(field.key)
-                    "
-                    variant="ghost"
-                    size="xs"
-                    class="h-auto shrink-0 border-0 px-1 text-xs font-normal text-muted-foreground hover:text-foreground"
-                    :data-testid="`config-drift-clear-${domain}-${field.key}`"
-                    :title="t('settings.driftedClear')"
-                    @click="handleReset(field.key)"
-                >
-                    {{ t("settings.driftedClear") }}
-                </Button>
-                <Button
-                    v-if="field.allowCustom && customMode[field.key] && !fieldReadonly(field)"
-                    variant="ghost"
-                    size="xs"
-                    class="h-auto shrink-0 border-0 px-1 text-xs font-normal text-muted-foreground hover:text-foreground"
-                    :data-testid="`config-custom-exit-${domain}-${field.key}`"
-                    @click="exitCustomMode(field)"
-                >
-                    {{ t("settings.customBack") }}
-                </Button>
+                            <Button
+                                v-if="
+                                    canDeleteOverride &&
+                                    isDrifted(field) &&
+                                    !fieldReadonly(field) &&
+                                    !isLocked(field.key)
+                                "
+                                variant="ghost"
+                                size="xs"
+                                class="h-auto shrink-0 border-0 px-1 text-xs font-normal text-muted-foreground hover:text-foreground"
+                                :data-testid="`config-drift-clear-${domain}-${field.key}`"
+                                :title="t('settings.driftedClear')"
+                                @click="handleReset(field.key)"
+                            >
+                                {{ t("settings.driftedClear") }}
+                            </Button>
+                            <Button
+                                v-if="
+                                    field.allowCustom &&
+                                    customMode[field.key] &&
+                                    !fieldReadonly(field)
+                                "
+                                variant="ghost"
+                                size="xs"
+                                class="h-auto shrink-0 border-0 px-1 text-xs font-normal text-muted-foreground hover:text-foreground"
+                                :data-testid="`config-custom-exit-${domain}-${field.key}`"
+                                @click="exitCustomMode(field)"
+                            >
+                                {{ t("settings.customBack") }}
+                            </Button>
 
-                <Button
-                    v-if="
-                        canDeleteOverride &&
-                        !fieldReadonly(field) &&
-                        !isLocked(field.key) &&
-                        isWritable(field.key)
-                    "
-                    variant="ghost"
-                    size="xs"
-                    class="h-auto border-0 px-1 text-xs font-normal text-muted-foreground hover:text-foreground"
-                    :data-testid="`config-reset-${domain}-${field.key}`"
-                    :title="t('settings.resetToDefault')"
-                    :aria-label="t('settings.resetToDefault')"
-                    @click="handleReset(field.key)"
-                >
-                    ↺
-                </Button>
-            </div>
+                            <Button
+                                v-if="
+                                    canDeleteOverride &&
+                                    !fieldReadonly(field) &&
+                                    !isLocked(field.key) &&
+                                    isWritable(field.key)
+                                "
+                                variant="ghost"
+                                size="xs"
+                                class="h-auto border-0 px-1 text-xs font-normal text-muted-foreground hover:text-foreground"
+                                :data-testid="`config-reset-${domain}-${field.key}`"
+                                :title="t('settings.resetToDefault')"
+                                :aria-label="t('settings.resetToDefault')"
+                                @click="handleReset(field.key)"
+                            >
+                                ↺
+                            </Button>
+                        </div>
+                    </div>
+                </details>
+            </template>
             <div v-if="!readonly" class="flex justify-end pt-1">
                 <!-- H-05：手搓 primary 按钮（自带 disabled:opacity-50 与 hover:opacity-90）换 vendor `Button`；
                      尺寸取 `xs` 是为了贴住原形状（h-6 px-2 + text-xs），不改变这一行的视觉重量。 -->

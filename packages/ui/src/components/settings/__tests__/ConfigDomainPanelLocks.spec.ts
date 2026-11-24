@@ -15,6 +15,11 @@ const i18n = createI18n({
                 save: "保存",
             },
             settings: {
+                configGroupBasic: "基础设置",
+                configGroupLoop: "循环保护",
+                configGroupBudget: "运行预算",
+                configGroupCeiling: "硬上限",
+                configGroupCount: "{count} 项",
                 adminLockedBadge: "由管理员锁定",
                 adminLockReason: "由管理员锁定：{reason}",
                 configCardExpandHint: "展开查看全部设置",

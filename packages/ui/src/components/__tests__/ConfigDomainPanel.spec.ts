@@ -20,6 +20,13 @@ const i18n = createI18n({
                     "This key only takes effect at the instance layer: user and workspace layers neither inherit nor can modify it",
                 configCardFieldCount: "{count} fields",
                 configCardExpandHint: "Expand to see all settings",
+                // task-1022：运行时阈值分组（基础/循环/预算/硬上限）新增 5 个键。
+                // 局部夹具缺键时 t() 原样回显，被「裸 i18n 键」护栏按真判据抓到 —— 补键不放宽断言。
+                configGroupBasic: "Basics",
+                configGroupLoop: "Loop protection",
+                configGroupBudget: "Run budgets",
+                configGroupCeiling: "Hard ceilings",
+                configGroupCount: "{count} items",
                 // task-225（默认展开）暴露的夹具缺口：这些行原先被折叠挡住、从未渲染，
                 // 于是「裸 i18n 键」守卫一直是**空过**的。补键不放宽断言（守卫照旧全量扫渲染结果）。
                 configSourceInstance: "instance",

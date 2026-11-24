@@ -20,6 +20,11 @@ const i18n = createI18n({
     messages: {
         en: {
             settings: {
+                configGroupBasic: "Basics",
+                configGroupLoop: "Loop protection",
+                configGroupBudget: "Run budgets",
+                configGroupCeiling: "Hard ceilings",
+                configGroupCount: "{count} items",
                 notSet: "(not set)",
                 empty: "(empty)",
                 resetToDefault: "Reset",

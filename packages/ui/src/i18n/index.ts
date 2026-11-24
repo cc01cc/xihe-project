@@ -1264,6 +1264,13 @@ export const messages = {
             executionBackendFrozenHint:
                 "Docker 执行后端按 2026-10-31 裁定冻结，无法在此工作区运行任务。请新建一个「直接挂载」工作区继续使用。",
             hostDirectory: "宿主机目录",
+            // task-1019：同一屏里原本有三处都叫「宿主机目录」（区标题 / 添加按钮 / 行内浏览），
+            // 用户点错还把空行加进了必填列表。三个动作各用一个名字。
+            rootsTitle: "工作区目录",
+            addRoot: "添加目录",
+            browseDirectory: "浏览目录",
+            removeDirectory: "移除目录",
+            storageAdvanced: "目录处理方式说明",
             executionBackend: "执行后端",
             hostBackend: "宿主机",
             hostBackendDesc: "显式授权，不提供隔离",
@@ -1282,10 +1289,19 @@ export const messages = {
             stepConfirm: "④ 确认创建",
             readDirectory: "读取",
             sourcePathPlaceholder: "Runtime 可访问的目录路径",
-            sourceEmpty: "请输入目录路径并点击「读取」",
+            // task-1019：旧文案教用户「输入路径并点读取」，但界面早已是「打开即列目录」，
+            // 没有「读取」按钮；空目录时这句话与眼前的交互完全相反。
+            sourceEmpty: "这个目录是空的；也可以直接在上方输入完整路径后按回车。",
             sourceBrowserHint:
-                "目录根的解析与校验由 Runtime 完成；点入子目录后点击「使用此目录」确认。",
+                "逐级点入子目录，或直接输入路径；确认后点「使用此目录」把当前目录填进对应的目录行。",
             useThisDirectory: "使用此目录",
+            submitBlockedSaving: "正在创建，请稍候。",
+            submitBlockedName: "请填写工作区名称。",
+            submitBlockedDescription: "描述超出了长度限制。",
+            submitBlockedEmptyRoot: "第 {index} 个目录还没有填路径。",
+            submitBlockedInvalidRoot: "第 {index} 个目录不可用：{reason}",
+            submitBlockedNoRoot: "请至少填写一个目录。",
+            submitBlockedBackend: "执行后端「{mode}」当前不可用，请换一个后端。",
             sourceReadFailed: "目录不可读取，请检查路径与权限后重试",
             runtimeUnavailable: "Runtime 暂不可达，请确认服务已启动后重试",
             preflightChecking: "正在读取 Runtime 后端能力…",
@@ -2825,6 +2841,7 @@ export const messages = {
                 fourLayerInstance: "实例",
                 fourLayerDetail:
                     "同域同键按「工作区 → 工作区默认 → 个人 → 实例」取值；修改工作区默认值对没有显式覆盖的工作区立即生效。",
+                fourLayerDetailToggle: "查看详情",
                 // H4：组徽标数**入口数**、行徽标才数**字段数**。
                 entryCount: "{count} 个入口",
                 groupOps: "实例运维",
@@ -3250,6 +3267,12 @@ export const messages = {
             agentTemplateDescription: "描述",
             agentTemplatePrompt: "System prompt",
             agentTemplateToolMode: "工具模式",
+            agentTemplateToolModeNone: "未启用",
+            agentTemplateToolModeWorkspace: "工作区工具",
+            agentTemplateToolModeRaw: "工具模式（原始值）",
+            agentTemplateTechDetails: "技术详情",
+            agentTemplateTechId: "模板 ID",
+            agentTemplateTechPreset: "权限预设",
             agentTemplateRole: "权限预设",
             agentTemplateNoRole: "不使用预设",
             agentTemplateProvider: "Provider（可选）",
@@ -3362,6 +3385,8 @@ export const messages = {
             language: "语言",
             resetToDefault: "重置为系统默认",
             notSet: "（未设置）",
+            boolValueTrue: "开启",
+            boolValueFalse: "关闭",
             empty: "（空）",
             driftedBadge: "当前不可用",
             driftedOption: "{value}（当前不可用）",
@@ -3475,6 +3500,11 @@ export const messages = {
             configSourceOverridable: "可被覆盖",
             configSourceInstanceOnly: "仅实例层",
             configKeyInstanceOnlyBadge: "仅实例层",
+            configGroupBasic: "基础设置",
+            configGroupLoop: "循环保护",
+            configGroupBudget: "运行预算",
+            configGroupCeiling: "硬上限",
+            configGroupCount: "{count} 项",
             configSourceUpper: "上层",
             configSourceEnvShort: "环境变量",
             configSummaryInheritedLayer: "{count} 项由{source}设定",
@@ -3808,7 +3838,7 @@ export const messages = {
                             "附件清单不合规（相对路径、sha256 为 64 位 hex、kind 三选一）",
                         sourcePathInvalid:
                             "sourcePath 不合规：要工作区相对路径，不含 .. 或盘符，且与定义目录名一致",
-                        trustedForbidden: "只有实例管理员可以导入 trusted=true（受信来源）",
+                        trustedForbidden: "只有实例管理员可以导入受信来源的模板",
                         trustedNotAllowed:
                             "个人技能库不接受 trusted 字段：连 trusted=false 也会整批 400（P-189-1）—— 删掉该键再导入",
                         jsonInvalid: "不是合法 JSON",
@@ -4925,7 +4955,8 @@ export const messages = {
                 "May be incomplete: the server also counts workspaces you cannot see; only the part visible to this account is listed.",
             writeConfirmDerivedNone:
                 "A full list isn't available here: the subject is not you, and workspaces cannot be looked up by member yet.",
-            writeConfirmDerivedEmpty: "Among the workspaces you can see, this member owns none.",
+            writeConfirmDerivedEmpty:
+                "Among the workspaces you can see, this member owns no workspaces.",
             writeConfirmSelf:
                 "The subject is you: after the move you immediately lose access to this subtree, and moving yourself back will be refused because the unit is outside your management scope.",
             writeConfirmMove: "Confirm move",
@@ -5655,7 +5686,7 @@ export const messages = {
             agentCapInheritHint:
                 "Inherited mode follows this principal's role baseline and is not editable per atom; switch to “Specify permissions explicitly” to narrow it.",
             agentCapZeroHint:
-                "Selecting none means an explicit zero cap (CP records capSource=explicit), not “use the baseline”.",
+                "Not selecting any permission means an explicit zero cap (CP records capSource=explicit), not “use the baseline”.",
             // task-959 / R38: the workspace dimension (MCP access + access-preset import).
             agentMcpTitle: "MCP",
             agentMcpLoading: "Loading…",
@@ -5892,6 +5923,11 @@ export const messages = {
             executionBackendFrozenHint:
                 "The Docker execution backend was frozen on 2026-10-31, so tasks cannot run in this workspace. Create a new “Direct attach” workspace to continue.",
             hostDirectory: "Host directory",
+            rootsTitle: "Workspace directories",
+            addRoot: "Add directory",
+            browseDirectory: "Browse for a directory",
+            removeDirectory: "Remove directory",
+            storageAdvanced: "Directory handling details",
             executionBackend: "Execution backend",
             hostBackend: "Host",
             hostBackendDesc: "Explicitly authorized, not isolated",
@@ -5911,10 +5947,19 @@ export const messages = {
             stepConfirm: "4. Confirm",
             readDirectory: "Read",
             sourcePathPlaceholder: "A directory path the Runtime can access",
-            sourceEmpty: "Enter a directory path and click Read",
+            sourceEmpty:
+                "This directory is empty. You can also type a full path above and press Enter.",
             sourceBrowserHint:
-                "The Runtime resolves and validates the directory root; drill into subdirectories then click Use this directory.",
+                "Click into sub-directories, or type a path directly; then click “Use this directory” to put it into the matching directory row.",
             useThisDirectory: "Use this directory",
+            submitBlockedSaving: "Creating, please wait.",
+            submitBlockedName: "Enter a workspace name.",
+            submitBlockedDescription: "The description is too long.",
+            submitBlockedEmptyRoot: "Directory {index} has no path yet.",
+            submitBlockedInvalidRoot: "Directory {index} is not usable: {reason}",
+            submitBlockedNoRoot: "Fill in at least one directory.",
+            submitBlockedBackend:
+                "Execution backend “{mode}” is unavailable right now. Pick another backend.",
             sourceReadFailed: "The directory cannot be read; check the path and permissions",
             runtimeUnavailable:
                 "Runtime is temporarily unavailable; confirm the service is running and retry",
@@ -6262,7 +6307,7 @@ export const messages = {
             environmentFieldLastHeartbeat: "Last heartbeat",
             environmentFieldReleaseStatus: "Release status",
             environmentValueUnknown: "Unknown",
-            environmentValueNone: "none",
+            environmentValueNone: "Not set",
             environmentValueNotObserved: "Not observed",
             environmentCapabilityAvailable: "{maturity} / available",
             environmentCapabilityUnavailable: "Unavailable: {reason}",
@@ -7488,6 +7533,7 @@ export const messages = {
                 fourLayerInstance: "Instance",
                 fourLayerDetail:
                     "For the same domain and key the order is workspace → workspace default → personal → instance; changing a workspace default takes effect immediately for workspaces without an explicit override.",
+                fourLayerDetailToggle: "Details",
                 entryCount: "{count} entries",
                 groupOps: "Instance operations",
                 groupSecurity: "Security & permissions",
@@ -7915,6 +7961,12 @@ export const messages = {
             agentTemplateDescription: "Description",
             agentTemplatePrompt: "System prompt",
             agentTemplateToolMode: "Tool mode",
+            agentTemplateToolModeNone: "Disabled",
+            agentTemplateToolModeWorkspace: "Workspace tools",
+            agentTemplateToolModeRaw: "Tool mode (raw value)",
+            agentTemplateTechDetails: "Technical details",
+            agentTemplateTechId: "Template ID",
+            agentTemplateTechPreset: "Permission preset",
             agentTemplateRole: "Permission preset",
             agentTemplateNoRole: "No preset",
             agentTemplateProvider: "Provider (optional)",
@@ -7964,7 +8016,7 @@ export const messages = {
             apiTypeDashscopeGeneration: "DashScope Text Generation",
             apiTypeDashscopeMultimodalEmbedding: "DashScope Multimodal Embedding",
             embeddingConnection: "Embedding connection",
-            embeddingConnectionNone: "None selected (inherit from next layer)",
+            embeddingConnectionNone: "Not selected (inherit from next layer)",
             embeddingNoConnections:
                 "No usable embedding connection yet; create an embedding-type connection in provider settings first.",
             embeddingModel: "Model",
@@ -8028,6 +8080,8 @@ export const messages = {
             language: "Language",
             resetToDefault: "Reset to System Default",
             notSet: "(not set)",
+            boolValueTrue: "On",
+            boolValueFalse: "Off",
             empty: "(empty)",
             driftedBadge: "Unavailable",
             driftedOption: "{value} (currently unavailable)",
@@ -8141,6 +8195,11 @@ export const messages = {
             configSourceOverridable: "Overridable",
             configSourceInstanceOnly: "Instance layer only",
             configKeyInstanceOnlyBadge: "Instance only",
+            configGroupBasic: "Basics",
+            configGroupLoop: "Loop protection",
+            configGroupBudget: "Run budgets",
+            configGroupCeiling: "Hard ceilings",
+            configGroupCount: "{count} items",
             configSourceUpper: "Upper layer",
             configSourceEnvShort: "Environment",
             configSummaryInheritedLayer: "{count} set by {source}",
@@ -8283,7 +8342,7 @@ export const messages = {
             presetsDriftLocalAdded: "Added locally (never deleted)",
             presetsDriftOverridden:
                 "Shadowed by a local row (the import row is restored, the local one stays)",
-            presetsDriftEmptyBucket: "None",
+            presetsDriftEmptyBucket: "No entries",
             presetsDriftOrigins: "From {count} preset groups",
             presetsDriftAtomOther: "Other permission",
             presetsDriftSummary:
@@ -8501,7 +8560,8 @@ export const messages = {
                             "The attachment manifest is not valid (relative path, 64-hex sha256, kind of reference/script/asset)",
                         sourcePathInvalid:
                             "sourcePath is not valid: it must be workspace-relative (no .., no drive prefix) and match the definition directory name",
-                        trustedForbidden: "Only an instance administrator may import trusted=true",
+                        trustedForbidden:
+                            "Only an instance administrator may import trusted (verified) templates",
                         trustedNotAllowed:
                             "The personal library rejects the trusted key outright: even trusted=false fails the whole batch with 400 (P-189-1) — remove the key and import again",
                         jsonInvalid: "Not valid JSON",

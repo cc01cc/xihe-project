@@ -19,6 +19,23 @@ const BANNED: Array<{ label: string; pattern: RegExp }> = [
         label: "HTTP 端点（METHOD /api/…）",
         pattern: /\b(GET|POST|PUT|PATCH|DELETE)\s+\/api\//,
     },
+    {
+        // task-1022：UUID 是排障标识，只能出现在「技术详情」这类由组件拼接的折叠区，
+        // 不能进用户文案词表（否则复制到截图/导出里也带着内部主键）。
+        label: "UUID 主键",
+        pattern: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+    },
+    {
+        // task-1022：wire 枚举 `none` 必须人话化（未启用 / Not set），文案里不许出现裸值。
+        label: "wire 枚举 none",
+        pattern: /\bnone\b/i,
+    },
+    {
+        // task-1022：布尔 wire 值与来源短语拼起来会变成「true（代码默认）」；人话是
+        // 「开启（代码默认）」。中英括号都算（en-US 用半角括号）。
+        label: "wire 布尔 true（…）",
+        pattern: /\btrue\s*[（(]/,
+    },
     { label: "internal term: read face", pattern: /read[- ]face/i },
     { label: "internal term: source of truth", pattern: /source of truth/i },
     { label: "internal term: derived value", pattern: /derived value/i },
