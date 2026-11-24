@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,10 +29,12 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import com.cc01cc.p.xihe.cp.policy.LimitSpec;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -267,7 +270,7 @@ public class ProviderConnectionService {
         connection.setModelDiscoveryUrl(modelDiscoveryUrl);
         connection.setModelDiscoveryUrlIgnoredReason(modelDiscoveryUrlIgnoredReason);
         connection.setManualModels(serializeModels(input.manualModels()));
-        ProviderConnection saved = repository.saveAndFlush(connection);
+        ProviderConnection saved = saveAndFlushTranslatingLabelConflict(connection);
         audit(saved, "CREATED", null, saved.getStatus());
         return saved;
     }
@@ -359,7 +362,7 @@ public class ProviderConnectionService {
         if (input.hasLimitChanges()) {
             applyLimits(connection, input);
         }
-        ProviderConnection saved = repository.save(connection);
+        ProviderConnection saved = saveAndFlushTranslatingLabelConflict(connection);
         audit(saved, "UPDATED", null, saved.getStatus());
         return saved;
     }
@@ -985,23 +988,60 @@ public class ProviderConnectionService {
     }
 
     /**
-     * PLAN-0555: display names are unique per owner + provider, case-insensitively.
-     * The database index is the authority; this pre-check gives a stable 409 on the
-     * common path and keeps the error inside the request transaction.
+     * task-976 / R18: display names are unique per owner layer, case-insensitively and
+     * after trimming. Cross-layer duplicates stay legal (INSTANCE and USER may both own
+     * a "DeepSeek" connection). The layer-wide DB expression index is the authority;
+     * this pre-check gives a stable 409 on the common path and keeps the error inside
+     * the request transaction. The provider-scoped query is a subset of the same rule
+     * and is merged in so the pre-check and the persisted rows never diverge.
      */
     private void requireUniqueLabel(String ownerType, String ownerId, String providerId,
                                     String label, UUID excludeId) {
         String normalized = normalizeLabelKey(label);
-        for (ProviderConnection existing : repository.findByOwnerTypeAndOwnerIdAndProviderId(
-                ownerType, ownerId, providerId)) {
+        Set<UUID> seen = new HashSet<>();
+        List<ProviderConnection> candidates = new ArrayList<>(
+                repository.findByOwnerTypeAndOwnerId(ownerType, ownerId));
+        candidates.addAll(repository.findByOwnerTypeAndOwnerIdAndProviderId(
+                ownerType, ownerId, providerId));
+        for (ProviderConnection existing : candidates) {
+            if (existing.getId() != null && !seen.add(existing.getId())) {
+                continue;
+            }
             if (excludeId != null && excludeId.equals(existing.getId())) {
                 continue;
             }
             if (normalizeLabelKey(existing.getLabel()).equals(normalized)) {
-                throw new LabelConflictException(
-                        "A connection with this label already exists for this provider and scope");
+                throw new LabelConflictException(label);
             }
         }
+    }
+
+    /**
+     * The unique index is the final arbiter for concurrent writers: the losing insert/update
+     * fails at flush, and only the label indexes are translated to the typed 409. Any other
+     * integrity failure (e.g. the connection-key slot) keeps its existing handling.
+     */
+    private ProviderConnection saveAndFlushTranslatingLabelConflict(ProviderConnection connection) {
+        try {
+            return repository.saveAndFlush(connection);
+        } catch (DataIntegrityViolationException e) {
+            if (isLabelUniquenessViolation(e)) {
+                throw new LabelConflictException(connection.getLabel());
+            }
+            throw e;
+        }
+    }
+
+    private static boolean isLabelUniquenessViolation(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof org.hibernate.exception.ConstraintViolationException constraint
+                    && constraint.getConstraintName() != null) {
+                String name = constraint.getConstraintName();
+                return "uq_provider_connections_owner_label".equals(name)
+                        || "uq_provider_connections_owner_provider_label".equals(name);
+            }
+        }
+        return false;
     }
 
     private static String normalizeLabelKey(String value) {
@@ -1245,7 +1285,9 @@ public class ProviderConnectionService {
 
     /** PLAN-0555: duplicate display name inside one owner + provider. */
     public static final class LabelConflictException extends IllegalStateException {
-        public LabelConflictException(String message) { super(message); }
+        public LabelConflictException(String label) {
+            super("A connection with the label \"" + label + "\" already exists in this scope");
+        }
     }
 
     public static final class KeyConflictException extends IllegalStateException {

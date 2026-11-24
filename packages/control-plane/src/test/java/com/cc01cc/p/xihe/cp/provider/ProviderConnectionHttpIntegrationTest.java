@@ -235,7 +235,7 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
 
         var conflict = send("POST", "", createBody("second", "", " shared NAME "));
 
-        assertProblem(conflict, 409, "PROVIDER_CONNECTION_LABEL_CONFLICT");
+        assertProblem(conflict, 409, "CONNECTION_LABEL_EXISTS");
         assertEquals("label", mapper.readTree(conflict.body()).path("field").asText());
         assertEquals(before + 1, repository.count());
     }

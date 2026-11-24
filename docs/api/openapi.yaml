@@ -3543,7 +3543,7 @@ paths:
           description: 'FORBIDDEN - RFC 9457 ProblemDetails with code "FORBIDDEN" from the security access-denied handler. INSTANCE scope requires cap:instance:admin (CAP_INSTANCE_ADMIN); WORKSPACE scope requires a writable workspace role or MANAGE_PROVIDER_CONNECTIONS. The body never carries key material.'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '409':
-          description: 'PROVIDER_CONNECTION_KEY_CONFLICT when the (scope, ownerId, providerId, connectionKey) slot is already taken, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label) when another connection for the same owner and provider already uses the label (case-insensitive, trimmed).'
+          description: 'PROVIDER_CONNECTION_KEY_CONFLICT when the (scope, ownerId, providerId, connectionKey) slot is already taken, or CONNECTION_LABEL_EXISTS (field=label; detail names the conflicting label) when another connection in the same owner layer already uses the label (case-insensitive, trimmed, regardless of provider). The same label stays legal across layers (INSTANCE / USER / WORKSPACE).'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/provider-connections/{connectionId}:
     parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
@@ -3573,7 +3573,7 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '404': { $ref: '#/components/responses/Problem' }
         '409':
-          description: 'PROVIDER_CONNECTION_KEY_IMMUTABLE, CONNECTION_REVISION_CHANGED, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label; label uniqueness is per owner + provider, case-insensitive and trimmed).'
+          description: 'PROVIDER_CONNECTION_KEY_IMMUTABLE, CONNECTION_REVISION_CHANGED, or CONNECTION_LABEL_EXISTS (field=label; detail names the conflicting label; label uniqueness is per owner layer, case-insensitive and trimmed, regardless of provider).'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
     delete:
       tags: [provider]

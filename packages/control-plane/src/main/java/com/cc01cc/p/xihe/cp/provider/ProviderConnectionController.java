@@ -63,7 +63,7 @@ public class ProviderConnectionController {
         } catch (ProviderConnectionService.LabelConflictException e) {
             logger.warn("Provider connection create rejected errorCode={}", e.getMessage());
             return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.CONFLICT, "PROVIDER_CONNECTION_LABEL_CONFLICT", e.getMessage(),
+                    HttpStatus.CONFLICT, "CONNECTION_LABEL_EXISTS", e.getMessage(),
                     Map.of("field", "label"));
         } catch (ProviderConnectionService.LabelInvalidException e) {
             logger.warn("Provider connection create rejected errorCode={}", e.getMessage());
@@ -115,7 +115,7 @@ public class ProviderConnectionController {
             logger.warn("Provider connection update rejected connectionId={} errorCode={}",
                     connectionId, e.getMessage());
             return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.CONFLICT, "PROVIDER_CONNECTION_LABEL_CONFLICT", e.getMessage(),
+                    HttpStatus.CONFLICT, "CONNECTION_LABEL_EXISTS", e.getMessage(),
                     Map.of("field", "label"));
         } catch (ProviderConnectionService.LabelInvalidException e) {
             logger.warn("Provider connection update rejected connectionId={} errorCode={}",
