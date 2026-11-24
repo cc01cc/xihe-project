@@ -147,7 +147,14 @@ describe("task-217 · 实例作用域原子不得解锁工作区写面", () => {
         );
         expect(panel).toContain('workspaceAtoms.value.includes("MANAGE_WORKSPACE_AGENTS")');
         expect(panel).toContain('workspaceAtoms.value.includes("MEMORY_WRITE")');
-        expect(panel).not.toContain(INSTANCE_WRITE);
+        // task-1044：旧断言 `not.toContain(INSTANCE_WRITE)` 把**展示名映射**也算成了 gating ——
+        // task-949 在面板里加了 `WRITE_INSTANCE_CONTENT: "agentAtomWriteInstanceContent"` 翻译表，
+        // 那是把原子翻成人话，不放行任何写面。这里收窄到「判定表达式」：
+        // ① 任何 includes(...) 调用都不得引用实例原子；② 实例原子在整文件只允许出现一次（即那条映射），
+        //    多出第二处就说明有人加了新的用法，必须重新审。
+        expect(panel).not.toMatch(/includes\(\s*["']WRITE_INSTANCE_CONTENT["']\s*\)/);
+        expect(panel.match(/WRITE_INSTANCE_CONTENT/g) ?? []).toHaveLength(1);
+        expect(panel).toContain('WRITE_INSTANCE_CONTENT: "agentAtomWriteInstanceContent"');
     });
 });
 

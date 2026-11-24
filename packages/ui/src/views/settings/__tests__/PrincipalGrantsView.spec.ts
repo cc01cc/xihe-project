@@ -176,6 +176,11 @@ describe("principal-grant retirement (PLAN-0610 W5c)", () => {
             "utf8",
         );
         expect(panelSource).not.toContain("/settings/principal-grants");
-        expect(panelSource).toContain('to="/settings/presets"');
+        // task-1044：e3b5c497f（task-928）把 F-02 指引从「预设」挪到实例级智能体主体页
+        // （`/settings/instance/agent-principals`，testid `agent-principals-page-link`）。
+        // 旧断言钉的是已不存在的 surface，必须跟着换，而不是删掉。
+        expect(panelSource).not.toContain("/settings/presets");
+        expect(panelSource).toContain('to="/settings/instance/agent-principals"');
+        expect(panelSource).toContain('data-testid="agent-principals-page-link"');
     });
 });

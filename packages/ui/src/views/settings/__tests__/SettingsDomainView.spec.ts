@@ -132,6 +132,9 @@ const messages = {
                 fourLayerUser: "个人",
                 fourLayerInstance: "实例",
                 fourLayerDetail: "工作区 → 工作区默认 → 个人 → 实例",
+                // task-1044：task-1022 在 LayerPrecedenceBadges.vue:81 新增 <details> 折叠键；
+                // 本夹具只定义 zh-CN（createI18n 的 locale 也是 zh-CN），值逐字照 src/i18n/messages/settings.ts:173。
+                fourLayerDetailToggle: "查看详情",
                 // 夹具照产品文案（含 task-18 裁定的「去哪授予」那句）——断言要能复算，就不能只给半句。
                 // 夹具照产品文案逐字（含 task-18 裁定的「去哪授予」那句）——断言要能复算，就不能只给半句。
                 forbiddenBody:

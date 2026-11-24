@@ -52,7 +52,12 @@ const state = {
                     domainLlmProvider: "LLM 提供商",
                     domainContextPolicy: "上下文策略",
                     domainContextTemplates: "请求模板",
-                    permissionAtom: { writeInstanceContent: "写入实例内容" },
+                    // task-1044：SettingsForbiddenView 的只读信息条也会取读面原子名（此前只有写面 ⇒ 渲染出裸键）。
+                    // 两条值逐字照 src/i18n/messages/settings.ts:29/:31。
+                    permissionAtom: {
+                        writeInstanceContent: "写入实例内容",
+                        readInstanceContent: "读取实例内容",
+                    },
                     // LayerPrecedenceBadges 用的四层徽标文案（夹具必须给全，否则裸 key 守卫会红）。
                     ia: {
                         fourLayerOrderLabel: "覆盖顺序",
@@ -62,6 +67,8 @@ const state = {
                         fourLayerInstance: "实例",
                         fourLayerLowToHigh: "低 → 高",
                         fourLayerDetail: "低层默认值被高层覆盖",
+                        // task-1044：值与 src/i18n/messages/settings.ts:173 逐字一致（本夹具同 SettingsDomainView 只挂 zh-CN）。
+                        fourLayerDetailToggle: "查看详情",
                         forbiddenTitle: "没有访问权限",
                         forbiddenBody: "当前账号不能查看这一层",
                         backToUserLayer: "回到用户层",
