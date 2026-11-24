@@ -342,38 +342,26 @@ pub struct WriteBinaryQuery {
     pub root_id: Option<String>,
 }
 
-/// PLAN-0639 M7 (VM14): which boundary a file request may use.
-///
-/// Read-only requests may be served from a declared non-primary root on
-/// execution modes whose file layer can address it; writes stay on the primary
-/// root until non-primary roots have an execution surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RootAccess {
-    ReadOnly,
-    Write,
-}
-
 /// PLAN-0639 D39-5 先定根、再解析: resolve the declared-root boundary for one
-/// file request and enforce the executable-surface policy.
+/// file request and hand it to the executor (which owns the executable-surface
+/// policy, task-958).
 ///
 /// * No `rootId` → primary root: the boundary is the materialized workspace
 ///   path, no extra spec fetch, byte-identical to pre-0639 behavior.
 /// * `rootId` present → declared roots are read from the ExecutionSpec and the
 ///   requested root selected; unknown ids fail closed (`400`, via
 ///   `fs::select_root_boundary`).
-/// * PLAN-0639 M7 (VM12): a non-primary root is now **served for read-only
-///   operations** ([`RootAccess::ReadOnly`]) so declared-root files can be opened
-///   in the UI. The mode gate lives one layer down
-///   (`WorkspaceExecutionRouter::exec_oneshot_in_root`): docker/MXC reads still
-///   fail closed because their in-container path mapping is a separate wave, and
-///   writes keep answering `501 PER_ROOT_EXECUTION_UNSUPPORTED` rather than
-///   silently being served from the primary root (D39-5: serving the wrong root
-///   would be a boundary lie).
+/// * task-958 (R50/R54/R55): there is no read/write split at this layer. The
+///   mode matrix lives one layer down
+///   (`WorkspaceExecutionRouter::declared_root_operation_support`):
+///   `windows-host` serves reads and writes from any declared root, while
+///   `windows-mxc`/`docker` fail closed with `PER_ROOT_READ_UNSUPPORTED` /
+///   `PER_ROOT_EXECUTION_UNSUPPORTED` rather than silently being served from
+///   the primary root (D39-5: serving the wrong root would be a boundary lie).
 async fn resolve_request_root(
     app: &AppState,
     ws_id: &str,
     root_id: Option<&str>,
-    access: RootAccess,
 ) -> Result<fs::RootBoundary, (StatusCode, Json<Value>)> {
     let instance = app.registry.get(ws_id).await.ok_or_else(|| {
         problem(
@@ -390,30 +378,7 @@ async fn resolve_request_root(
             .await
             .map_err(map_error)?
     };
-    let boundary =
-        fs::select_root_boundary(&instance.workspace_path, &roots, root_id).map_err(map_error)?;
-    if let Some(requested) = boundary.root_id.as_deref() {
-        let same_root = boundary
-            .host_path
-            .canonicalize()
-            .ok()
-            .zip(
-                std::path::Path::new(&instance.workspace_path)
-                    .canonicalize()
-                    .ok(),
-            )
-            .is_some_and(|(a, b)| a == b);
-        if !same_root && access == RootAccess::Write {
-            return Err(problem(
-                StatusCode::NOT_IMPLEMENTED,
-                "PER_ROOT_EXECUTION_UNSUPPORTED",
-                &format!(
-                    "declared root {requested:?} resolved, but writes to a non-primary root are not routed in this runtime build"
-                ),
-            ));
-        }
-    }
-    Ok(boundary)
+    fs::select_root_boundary(&instance.workspace_path, &roots, root_id).map_err(map_error)
 }
 
 /// PLAN-0639 M7 (VM12): a routed read hit a mode that cannot address the declared
@@ -437,6 +402,30 @@ fn per_root_read_unsupported(
         StatusCode::NOT_IMPLEMENTED,
         "PER_ROOT_READ_UNSUPPORTED",
         &format!("declared root {root_id:?} cannot be served in this runtime build: {reason}"),
+    )
+}
+
+/// task-958: a declared-root write reached a mode that cannot address the
+/// root (docker/MXC have no per-root mount mapping). Same 501 shape as the
+/// read gate, with the wire code the REST consumers already handle.
+fn per_root_write_unsupported(
+    workspace_id: &str,
+    boundary: &fs::RootBoundary,
+    error: &RuntimeError,
+) -> (StatusCode, Json<Value>) {
+    let root_id = boundary.root_id.as_deref().unwrap_or("");
+    let reason = match error {
+        RuntimeError::Unsupported { reason, .. } => reason.as_str(),
+        _ => "PER_ROOT_WRITE_UNSUPPORTED",
+    };
+    warn!(
+        "declared-root write not routed workspaceId={} rootId={} reason={}",
+        workspace_id, root_id, reason
+    );
+    problem(
+        StatusCode::NOT_IMPLEMENTED,
+        "PER_ROOT_EXECUTION_UNSUPPORTED",
+        &format!("declared root {root_id:?} cannot be written in this execution mode: {reason}"),
     )
 }
 
@@ -561,8 +550,7 @@ pub async fn handle_read_file(
     // PLAN-0639 D39-5: rootId (absent = primary root) selects the declared
     // root boundary; the per-root two-stage check runs here, authoritatively,
     // before the executor dispatch.
-    let boundary =
-        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::ReadOnly).await?;
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
     preflight_read_path(&req.path, &boundary)?;
     // PLAN-0427 T2.1: absence is a domain fact, not an error — FileNotFound
     // (ENOENT classified in fs::resolve_canonical) answers 200 {found:false}.
@@ -627,8 +615,7 @@ pub async fn handle_write_binary(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative write preflight.
-    let boundary =
-        resolve_request_root(&app, &ws_id, query.root_id.as_deref(), RootAccess::Write).await?;
+    let boundary = resolve_request_root(&app, &ws_id, query.root_id.as_deref()).await?;
     preflight_write_path(&path, &boundary)?;
     let body = to_bytes(
         body,
@@ -643,9 +630,14 @@ pub async fn handle_write_binary(
     })?;
     let msg = app
         .router
-        .write_file_binary(&ws_id, &path, &body)
+        .write_file_binary_in_root(&ws_id, &boundary, &path, &body)
         .await
-        .map_err(map_error)?;
+        .map_err(|error| match error {
+            error @ RuntimeError::Unsupported { .. } => {
+                per_root_write_unsupported(&ws_id, &boundary, &error)
+            }
+            other => map_error(other),
+        })?;
     Ok(Json(serde_json::json!({ "message": msg })))
 }
 
@@ -658,8 +650,7 @@ pub async fn handle_list_directory(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
-    let boundary =
-        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::ReadOnly).await?;
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
     preflight_read_path(&req.path, &boundary)?;
     let val = app
         .router
@@ -686,14 +677,18 @@ pub async fn handle_delete_file(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
-    let boundary =
-        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::Write).await?;
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
     preflight_read_path(&req.path, &boundary)?;
     let msg = app
         .router
-        .delete_file(&ws_id, &req.path)
+        .delete_file_in_root(&ws_id, &boundary, &req.path)
         .await
-        .map_err(map_error)?;
+        .map_err(|error| match error {
+            error @ RuntimeError::Unsupported { .. } => {
+                per_root_write_unsupported(&ws_id, &boundary, &error)
+            }
+            other => map_error(other),
+        })?;
     Ok(Json(serde_json::json!({ "message": msg })))
 }
 
@@ -706,14 +701,18 @@ pub async fn handle_mkdir(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative write preflight.
-    let boundary =
-        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::Write).await?;
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
     preflight_write_path(&req.path, &boundary)?;
     let msg = app
         .router
-        .mkdir(&ws_id, &req.path)
+        .mkdir_in_root(&ws_id, &boundary, &req.path)
         .await
-        .map_err(map_error)?;
+        .map_err(|error| match error {
+            error @ RuntimeError::Unsupported { .. } => {
+                per_root_write_unsupported(&ws_id, &boundary, &error)
+            }
+            other => map_error(other),
+        })?;
     Ok(Json(serde_json::json!({ "message": msg })))
 }
 
@@ -726,8 +725,7 @@ pub async fn handle_stat(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
-    let boundary =
-        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::ReadOnly).await?;
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
     preflight_read_path(&req.path, &boundary)?;
     let val = app
         .router
@@ -758,8 +756,7 @@ pub async fn handle_search_files(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
-    let boundary =
-        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::ReadOnly).await?;
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
     let path = req.path.as_deref().unwrap_or(".");
     preflight_read_path(path, &boundary)?;
     // A filename search walks a whole subtree. Blocking the async runtime for
@@ -807,7 +804,7 @@ mod tests {
 
     /// Create a targeted-spec test server and a cached workspace instance.
     async fn setup_ws() -> (Arc<AppState>, String, TempDir, TestCp) {
-        setup_ws_with(serde_json::Value::Null, true).await
+        setup_ws_with(serde_json::Value::Null, None, true).await
     }
 
     /// PLAN-0639 D39-5: light variant — the spec carries `roots` and no Sandbox
@@ -815,11 +812,21 @@ mod tests {
     /// non-primary roots) exit before the executor dispatch, so these tests
     /// need no Docker.
     async fn setup_ws_light(roots: serde_json::Value) -> (Arc<AppState>, String, TempDir, TestCp) {
-        setup_ws_with(roots, false).await
+        setup_ws_with(roots, None, false).await
+    }
+
+    /// task-958: light variant with an explicit execution mode, so the support
+    /// matrix can be exercised without a Sandbox container.
+    async fn setup_ws_light_mode(
+        roots: serde_json::Value,
+        execution_mode: &str,
+    ) -> (Arc<AppState>, String, TempDir, TestCp) {
+        setup_ws_with(roots, Some(execution_mode), false).await
     }
 
     async fn setup_ws_with(
         roots: serde_json::Value,
+        execution_mode: Option<&str>,
         with_container: bool,
     ) -> (Arc<AppState>, String, TempDir, TestCp) {
         let dir = TempDir::new().unwrap();
@@ -835,7 +842,19 @@ mod tests {
             "storageRef": ws_id,
         });
         if !roots.is_null() {
-            spec_body["roots"] = roots;
+            spec_body["roots"] = roots.clone();
+        }
+        if let Some(mode) = execution_mode {
+            spec_body["executionMode"] = serde_json::Value::String(mode.to_string());
+            // A windows-host/windows-mxc spec is direct_attach and must carry hostPath.
+            spec_body["storageMode"] = serde_json::Value::String("direct_attach".to_string());
+            let host_path = roots
+                .get(0)
+                .and_then(|root| root.get("hostPath"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| dir.path().to_string_lossy().into_owned());
+            spec_body["hostPath"] = serde_json::Value::String(host_path);
         }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1419,31 +1438,113 @@ mod tests {
         }
     }
 
-    /// PLAN-0639 M7 (VM12): writes stay on the primary root — a declared root has no
-    /// execution surface yet, so answering 501 with the dedicated code beats
-    /// silently writing into a directory the executors cannot see (D39-5).
+    /// task-958 (R50/R54/R55): `windows-host` has no primary/secondary split.
+    /// Each declared root resolves against its own host path, and the read AND
+    /// write round-trip must land in the selected root.
     #[tokio::test]
-    async fn test_write_non_primary_root_stays_fail_closed_501() {
+    async fn test_windows_host_multi_root_read_write_matrix() {
         let primary = TempDir::new().unwrap();
         let root_b = TempDir::new().unwrap();
-        let (app, ws_id, _dir, _cp) = setup_ws_light(serde_json::json!([
-            {"rootId": "ws-primary", "hostPath": primary.path().to_string_lossy()},
-            {"rootId": "root-b", "hostPath": root_b.path().to_string_lossy()},
-        ]))
+        let (app, ws_id, _dir, _cp) = setup_ws_light_mode(
+            serde_json::json!([
+                {"rootId": "ws-primary", "hostPath": primary.path().to_string_lossy()},
+                {"rootId": "root-b", "hostPath": root_b.path().to_string_lossy()},
+            ]),
+            "windows-host",
+        )
         .await;
 
-        let state = State(app);
-        let path = Path(ws_id);
+        // ---- declared root write (bytes) ----
+        let state = State(app.clone());
+        let path = Path((ws_id.clone(), "from-root-b.txt".to_string()));
+        let query = Query(WriteBinaryQuery {
+            root_id: Some("root-b".into()),
+        });
+        let body = Body::from("root-b-bytes");
+        let _ = handle_write_binary(state, path, query, body).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root_b.path().join("from-root-b.txt")).unwrap(),
+            "root-b-bytes",
+            "declared-root write must land in root B, not the primary root"
+        );
+        assert!(!primary.path().join("from-root-b.txt").exists());
+
+        // ---- declared root read ----
+        let state = State(app.clone());
+        let path = Path(ws_id.clone());
+        let json = Json(ReadFileRestRequest {
+            path: "from-root-b.txt".into(),
+            max_bytes: None,
+            root_id: Some("root-b".into()),
+        });
+        let result = handle_read_file(state, path, json).await.unwrap();
+        assert!(result.found);
+        assert_eq!(result.content, "root-b-bytes");
+
+        // ---- declared root mkdir + delete ----
+        let state = State(app.clone());
+        let path = Path(ws_id.clone());
         let json = Json(RootFileRequest {
             path: "new-dir".into(),
             root_id: Some("root-b".into()),
         });
-        match handle_mkdir(state, path, json).await {
-            Err((status, Json(body))) => {
-                assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-                assert_eq!(body["code"], "PER_ROOT_EXECUTION_UNSUPPORTED");
+        let _ = handle_mkdir(state, path, json).await.unwrap();
+        assert!(root_b.path().join("new-dir").is_dir());
+        assert!(!primary.path().join("new-dir").exists());
+
+        let state = State(app.clone());
+        let path = Path(ws_id.clone());
+        let json = Json(RootFileRequest {
+            path: "from-root-b.txt".into(),
+            root_id: Some("root-b".into()),
+        });
+        let _ = handle_delete_file(state, path, json).await.unwrap();
+        assert!(!root_b.path().join("from-root-b.txt").exists());
+    }
+
+    /// task-958: a mode that cannot address a declared root must answer the
+    /// explicit 501 code instead of silently writing to the primary root.
+    /// (Docker roots are not reachable here: CP refuses to declare them at all,
+    /// see WorkspaceBackendPolicy.requireRootCountSupported; its runtime code is
+    /// pinned by the unit matrix in `executor.rs`.)
+    #[tokio::test]
+    async fn test_declared_root_write_mxc_fails_closed_501() {
+        for mode in ["windows-mxc"] {
+            let primary = TempDir::new().unwrap();
+            let root_b = TempDir::new().unwrap();
+            let (app, ws_id, _dir, _cp) = setup_ws_light_mode(
+                serde_json::json!([
+                    {"rootId": "ws-primary", "hostPath": primary.path().to_string_lossy()},
+                    {"rootId": "root-b", "hostPath": root_b.path().to_string_lossy()},
+                ]),
+                mode,
+            )
+            .await;
+
+            let state = State(app);
+            let path = Path(ws_id);
+            let json = Json(RootFileRequest {
+                path: "new-dir".into(),
+                root_id: Some("root-b".into()),
+            });
+            match handle_mkdir(state, path, json).await {
+                Err((status, Json(body))) => {
+                    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "mode={mode}");
+                    assert_eq!(
+                        body["code"], "PER_ROOT_EXECUTION_UNSUPPORTED",
+                        "mode={mode}"
+                    );
+                    assert!(
+                        body["detail"]
+                            .as_str()
+                            .unwrap_or("")
+                            .contains("PER_ROOT_WRITE_UNSUPPORTED"),
+                        "mode={mode} body={body}"
+                    );
+                }
+                Ok(_) => panic!("declared-root writes must fail closed on mode={mode}"),
             }
-            Ok(_) => panic!("non-primary root writes must fail closed in this wave"),
+            assert!(!root_b.path().join("new-dir").exists(), "mode={mode}");
         }
     }
 }

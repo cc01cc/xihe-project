@@ -496,10 +496,9 @@ fn preflight_file_operation(workspace: &str, operation: &str, payload: &Value) -
     }
 }
 
-/// PLAN-0639 M7 (VM12): the file operations that may be served from a
-/// **non-primary declared root**. Read-only by construction — a declared root
-/// without an execution surface must not become a writable escape from the
-/// primary root's boundary.
+/// PLAN-0639 M7 (VM12) / task-958: the file operations that only read. The
+/// split below (`RootAccess`) is the read/write axis of the declared-root
+/// support matrix; it is no longer an "only these may be routed" allowlist.
 pub const ROOT_READ_ONLY_OPERATIONS: &[&str] = &[
     "read_file",
     "read_file_range",
@@ -507,11 +506,57 @@ pub const ROOT_READ_ONLY_OPERATIONS: &[&str] = &[
     "get_file_info",
     "glob",
     "grep",
+    "search_files",
 ];
 
-/// `true` when `operation` may be routed to a non-primary declared root.
+/// `true` when `operation` only reads.
 pub fn is_root_read_only_operation(operation: &str) -> bool {
     ROOT_READ_ONLY_OPERATIONS.contains(&operation)
+}
+
+/// task-958: the access axis of the declared-root support matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootAccess {
+    ReadOnly,
+    Write,
+}
+
+/// task-958: classify one file operation for the support matrix.
+pub fn root_access_for_operation(operation: &str) -> RootAccess {
+    if is_root_read_only_operation(operation) {
+        RootAccess::ReadOnly
+    } else {
+        RootAccess::Write
+    }
+}
+
+/// task-958: execution modes whose file layer can address **every** declared
+/// root, not just the primary one. `windows-host` resolves each root against
+/// its own host path; `windows-mxc`/`docker` have no per-root mount mapping, so
+/// CP refuses to declare a second root in those modes (WORKSPACE_AUTHORIZATION
+/// R50/R54/R55: if a root can be selected it must be manageable).
+pub const MULTI_ROOT_EXECUTION_MODES: &[&str] = &["windows-host"];
+
+/// task-958: can `operation` be served from the selected declared root?
+///
+/// `Ok(())` for the primary root on every mode (delegation keeps pre-M7
+/// behavior byte-identical) and for any operation on a multi-root-capable
+/// mode. Everything else fails closed with the explicit code the REST layer
+/// maps to 501: reads keep `PER_ROOT_READ_UNSUPPORTED:<mode>`, writes answer
+/// `PER_ROOT_WRITE_UNSUPPORTED:<mode>`. Unknown modes are never treated as
+/// multi-root capable.
+pub fn declared_root_operation_support(
+    execution_mode: &str,
+    is_primary: bool,
+    operation: &str,
+) -> std::result::Result<(), String> {
+    if is_primary || MULTI_ROOT_EXECUTION_MODES.contains(&execution_mode) {
+        return Ok(());
+    }
+    Err(match root_access_for_operation(operation) {
+        RootAccess::ReadOnly => format!("PER_ROOT_READ_UNSUPPORTED:{execution_mode}"),
+        RootAccess::Write => format!("PER_ROOT_WRITE_UNSUPPORTED:{execution_mode}"),
+    })
 }
 
 /// Two host paths denote the same directory. Canonicalize first (the declared
@@ -809,8 +854,8 @@ impl WorkspaceExecutionRouter {
             .await
     }
 
-    /// PLAN-0639 M7 (VM12): route one **read-only** file operation to a declared
-    /// root boundary instead of the primary root.
+    /// PLAN-0639 M7 (VM12) / task-958: route one file operation to a declared
+    /// root boundary instead of assuming the primary root.
     ///
     /// * `boundary.root_id == None` → primary root: delegates to [`Self::exec_oneshot`],
     ///   byte-identical to pre-M7 (the caller already validated that path).
@@ -818,11 +863,11 @@ impl WorkspaceExecutionRouter {
     ///   path, so a path declared in root B is served from root B (D39-5: serving
     ///   it from the primary root would be a boundary lie).
     ///
-    /// Writes are deliberately not routed here: a non-primary root has no
-    /// execution surface yet, so `PER_ROOT_WRITE_UNSUPPORTED` fails closed rather
-    /// than writing into a directory the executors cannot see. Docker/MXC reads
-    /// fail closed for the same reason — their in-container path mapping is a
-    /// separate wave.
+    /// task-958 (R50/R54/R55): there is no primary/secondary privilege split.
+    /// `declared_root_operation_support` decides by `(execution mode, access)`;
+    /// `windows-host` serves reads and writes from any declared root, while
+    /// `windows-mxc`/`docker` fail closed with an explicit per-root code
+    /// because their file layer cannot address a second mount.
     async fn exec_oneshot_in_root(
         &self,
         workspace_id: &str,
@@ -841,21 +886,12 @@ impl WorkspaceExecutionRouter {
         if same_host_path(&boundary.host_path, Path::new(&instance.workspace_path)) {
             return self.exec_oneshot(workspace_id, operation, payload).await;
         }
-        if !is_root_read_only_operation(operation) {
-            return Err(RuntimeError::Unsupported {
+        declared_root_operation_support(&instance.execution_mode, false, operation).map_err(
+            |reason| RuntimeError::Unsupported {
                 capability: format!("file-operation:{operation}:root:{root_id}"),
-                reason: "PER_ROOT_WRITE_UNSUPPORTED".into(),
-            });
-        }
-        if instance.execution_mode != "windows-host" {
-            return Err(RuntimeError::Unsupported {
-                capability: format!("file-operation:{operation}:root:{root_id}"),
-                reason: format!(
-                    "PER_ROOT_READ_UNSUPPORTED:{}",
-                    instance.execution_mode.as_str()
-                ),
-            });
-        }
+                reason,
+            },
+        )?;
         let root_path = boundary.host_path.to_string_lossy().into_owned();
         self.execute_direct_attach_operation(
             workspace_id,
@@ -1574,6 +1610,26 @@ impl WorkspaceExecutionRouter {
             .to_string())
     }
 
+    /// task-958 (R54/R55): declared-root-aware text write. The path resolves
+    /// against the selected root's own host path, never the primary root.
+    pub async fn write_file_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        path: &str,
+        content: &str,
+    ) -> Result<String> {
+        let payload = serde_json::json!({"path": path, "content": content});
+        let val = self
+            .exec_oneshot_in_root(workspace_id, boundary, "write_file", payload)
+            .await?;
+        Ok(val
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("ok")
+            .to_string())
+    }
+
     /// Writes raw bytes through the same Router seam as every other Workspace
     /// file operation. MXC uses the one-shot framed worker; Docker and the
     /// explicit unrestricted host mode retain their existing host-storage path.
@@ -1602,6 +1658,33 @@ impl WorkspaceExecutionRouter {
                 .to_string());
         }
         fs::write_file_binary(path, data, &instance.workspace_path).await
+    }
+
+    /// task-958 (R54/R55): declared-root-aware binary write. Binary writes do
+    /// not pass through `exec_oneshot_in_root`, so the support matrix is
+    /// applied here with the same codes.
+    pub async fn write_file_binary_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        path: &str,
+        data: &[u8],
+    ) -> Result<String> {
+        let Some(root_id) = boundary.root_id.as_deref() else {
+            return self.write_file_binary(workspace_id, path, data).await;
+        };
+        file_worker::ensure_payload_size(data.len())?;
+        let instance = self.ensure(workspace_id).await?;
+        if same_host_path(&boundary.host_path, Path::new(&instance.workspace_path)) {
+            return self.write_file_binary(workspace_id, path, data).await;
+        }
+        declared_root_operation_support(&instance.execution_mode, false, "write_binary").map_err(
+            |reason| RuntimeError::Unsupported {
+                capability: format!("file-operation:write_binary:root:{root_id}"),
+                reason,
+            },
+        )?;
+        fs::write_file_binary(path, data, &boundary.host_path.to_string_lossy()).await
     }
 
     pub async fn list_directory(&self, workspace_id: &str, path: &str) -> Result<Value> {
@@ -1765,6 +1848,25 @@ impl WorkspaceExecutionRouter {
             .to_string())
     }
 
+    /// task-958 (R54/R55): declared-root-aware delete. Resolves against the
+    /// selected root, not the primary root.
+    pub async fn delete_file_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        path: &str,
+    ) -> Result<String> {
+        let payload = serde_json::json!({"path": path});
+        let val = self
+            .exec_oneshot_in_root(workspace_id, boundary, "delete_file", payload)
+            .await?;
+        Ok(val
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("deleted")
+            .to_string())
+    }
+
     pub async fn delete_directory(
         &self,
         workspace_id: &str,
@@ -1809,6 +1911,24 @@ impl WorkspaceExecutionRouter {
     pub async fn mkdir(&self, workspace_id: &str, path: &str) -> Result<String> {
         let payload = serde_json::json!({"path": path});
         let val = self.exec_oneshot(workspace_id, "mkdir", payload).await?;
+        Ok(val
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("created")
+            .to_string())
+    }
+
+    /// task-958 (R54/R55): declared-root-aware mkdir.
+    pub async fn mkdir_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        path: &str,
+    ) -> Result<String> {
+        let payload = serde_json::json!({"path": path});
+        let val = self
+            .exec_oneshot_in_root(workspace_id, boundary, "mkdir", payload)
+            .await?;
         Ok(val
             .get("message")
             .and_then(|v| v.as_str())
@@ -2312,35 +2432,80 @@ mod sandbox_error_mapping_tests {
 mod file_operation_tests {
     use super::*;
 
-    /// PLAN-0639 M7 (VM12): the non-primary-root routing allowlist is exactly the
-    /// read-only surface. A write op routed to a declared root would be a boundary
-    /// escape from the primary root, so the policy is pinned here.
+    /// task-958 (R50/R54/R55): the executable matrix is
+    /// `execution mode × primary/declared root × read/write`.
+    ///
+    /// * primary root → supported on every mode (delegation keeps pre-M7 behavior);
+    /// * any declared root → supported only on `windows-host`;
+    /// * `windows-mxc`/`docker` declared-root → explicit per-root code, never a
+    ///   silent primary-root fallback.
+    ///
+    /// 反证: dropping `windows-host` from [`MULTI_ROOT_EXECUTION_MODES`] turns
+    /// every host/declared cell red (tested during task-958 evidence).
     #[test]
-    fn only_read_only_operations_may_be_routed_to_a_declared_root() {
-        for operation in [
+    fn declared_root_support_matrix_covers_mode_root_and_access() {
+        let read_ops = [
             "read_file",
             "read_file_range",
             "list_directory",
             "get_file_info",
+        ];
+        let write_ops = [
+            "write_file",
+            "write_binary",
+            "delete_file",
+            "mkdir",
+            "edit_file",
+        ];
+        for mode in ["windows-host", "windows-mxc", "docker"] {
+            for is_primary in [true, false] {
+                for (access, operations) in [
+                    (RootAccess::ReadOnly, read_ops.as_slice()),
+                    (RootAccess::Write, write_ops.as_slice()),
+                ] {
+                    for operation in operations {
+                        let expected_supported = is_primary || mode == "windows-host";
+                        let result = declared_root_operation_support(mode, is_primary, operation);
+                        assert_eq!(
+                            result.is_ok(),
+                            expected_supported,
+                            "mode={mode} primary={is_primary} access={access:?} op={operation}"
+                        );
+                        if let Err(code) = result {
+                            let prefix = match access {
+                                RootAccess::ReadOnly => "PER_ROOT_READ_UNSUPPORTED:",
+                                RootAccess::Write => "PER_ROOT_WRITE_UNSUPPORTED:",
+                            };
+                            assert!(
+                                code.starts_with(prefix) && code.ends_with(mode),
+                                "unsupported cell must carry an explicit code, got {code}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn root_access_classification_splits_reads_and_writes() {
+        for operation in [
+            "read_file",
+            "list_directory",
+            "glob",
+            "grep",
+            "search_files",
         ] {
-            assert!(
-                is_root_read_only_operation(operation),
-                "{operation} must stay routable (UI opens declared-root files)"
-            );
+            assert_eq!(root_access_for_operation(operation), RootAccess::ReadOnly);
         }
         for operation in [
             "write_file",
             "write_binary",
             "delete_file",
             "mkdir",
-            "edit_file",
             "apply_patch",
-            "execute_command",
         ] {
-            assert!(
-                !is_root_read_only_operation(operation),
-                "{operation} must not be routed to a non-primary root yet"
-            );
+            assert_eq!(root_access_for_operation(operation), RootAccess::Write);
         }
     }
 

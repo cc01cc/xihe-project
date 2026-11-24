@@ -218,6 +218,8 @@ public class WorkspaceService {
         List<WorkspaceRoot> validatedRoots;
         String normalizedHostPath;
         if (hasRoots) {
+            // task-958 (R50/R54/R55): only windows-host can address every declared root.
+            WorkspaceBackendPolicy.requireRootCountSupported(normalizedExecutionMode, roots.size());
             validatedRoots = normalizeRoots(roots, normalizedStorageMode);
             normalizedHostPath = validatedRoots.get(0).getHostPath();
         } else {
@@ -962,6 +964,10 @@ public class WorkspaceService {
 
         List<WorkspaceRoot> existing = workspaceRootRepository
                 .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId));
+        // task-958 (R50/R54/R55): declaring a second root is allowed only where the
+        // runtime file layer can address it; "selectable" must mean "manageable".
+        WorkspaceBackendPolicy.requireRootCountSupported(
+                workspace.getExecutionMode(), existing.size() + 1);
         int nextPosition = existing.stream().mapToInt(WorkspaceRoot::getPosition).max().orElse(-1) + 1;
 
         Map<String, String> entry = new LinkedHashMap<>();
