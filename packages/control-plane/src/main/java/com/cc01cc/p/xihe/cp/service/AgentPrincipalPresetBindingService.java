@@ -166,10 +166,14 @@ public class AgentPrincipalPresetBindingService {
                 .orElseThrow(AgentPrincipalPresetBindingService::principalNotFound);
         atomPolicy.assertAgentBindable(roleId);
         atomPolicy.assertWithinCap(principal.getId(), roleId, scope.id());
-        grantability.assertGrantableRows(permissions.findByIdRoleId(roleId).stream()
-                .map(permission -> new com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator.PermissionAtom(
-                        permission.actionClass(), permission.resourcePattern()))
-                .collect(java.util.stream.Collectors.toSet()), scope);
+        // task-971: binding a role to an agent principal is agent-template materialization, not a
+        // human grant — the judge is "may an agent hold these atoms + may the caller administer this
+        // agent tier", never the human subset rule (an agent preset deliberately carries
+        // action:clone, which the caller does not hold). The forbidden-atoms 409 already ran above.
+        grantability.assertAgentTemplateGrantable(permissions.findByIdRoleId(roleId).stream()
+                .map(GrantPresetAtom::actionClass)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new)),
+                scope);
         boolean duplicate = bindings.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
                 .anyMatch(row -> roleId.equals(row.getRoleId())

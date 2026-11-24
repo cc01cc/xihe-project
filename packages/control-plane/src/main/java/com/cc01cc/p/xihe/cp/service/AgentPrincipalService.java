@@ -1344,8 +1344,13 @@ public class AgentPrincipalService {
      *   <li>may this role be bound to an <b>agent principal</b> at all — administrator and
      *       management atoms are refused ({@link PermissionAtomCatalog#canBindToAgentPrincipal}),
      *       because an agent is a grantee, never an administrator;</li>
-     *   <li>does the actor hold everything the role grants — "you cannot grant what you do not
-     *       hold" — evaluated with the same atom union the rest of the service uses.</li>
+     *   <li><b>task-971:</b> is this a legitimate agent-template materialization — every atom
+     *       must be one an agent may hold at all, and the actor must hold the agent-tier
+     *       authority ({@code CREATE_OWN_AGENT} / {@code MANAGE_AGENT_PRINCIPALS} at the
+     *       instance scope). Deliberately <b>not</b> the human subset rule: the actor is
+     *       instantiating a platform-managed template, not granting itself an atom (a human
+     *       never holds {@code action:clone}, an agent preset does by ruling D-1935). The
+     *       human-to-human and role-definition paths keep {@code assertGrantable} verbatim.</li>
      * </ol>
      *
      * <p>Deliberately one-time: once bound, the role takes effect immediately and stays until the
@@ -1371,10 +1376,9 @@ public class AgentPrincipalService {
                 throw notGrantable("instance-admin role cannot be bound to an agent principal ("
                         + forbidden + ")");
             }
-            // PLAN-0673 ④: the subset decision is the shared guard at the INSTANCE target scope —
-            // the caller's instance rows cover every workspace; a workspace-only hold does not
-            // (workspace ⊉ instance). GRANT_ANY_ATOM bypasses with an audit (guard-side).
-            grantabilityAs(actorId, new LinkedHashSet<>(atomNames),
+            // task-971: agent-template judgement at the INSTANCE target scope — agent-bindable atoms
+            // + the actor's agent-tier authority, not the human subset rule (see the method javadoc).
+            agentTemplateGrantabilityAs(actorId, new LinkedHashSet<>(atomNames),
                     com.cc01cc.p.xihe.cp.policy.AccessScope.instance());
         }
     }
@@ -1386,10 +1390,23 @@ public class AgentPrincipalService {
      */
     private void grantabilityAs(UUID actorId, Set<String> atoms,
                                 com.cc01cc.p.xihe.cp.policy.AccessScope scope) {
+        asActor(actorId, () -> grantability.assertGrantable(atoms, scope));
+    }
+
+    /**
+     * task-971: run the agent-template judgement with the explicit service actor (same
+     * {@code TenantContext} isolation as {@link #grantabilityAs}).
+     */
+    private void agentTemplateGrantabilityAs(UUID actorId, Set<String> atoms,
+                                             com.cc01cc.p.xihe.cp.policy.AccessScope scope) {
+        asActor(actorId, () -> grantability.assertAgentTemplateGrantable(atoms, scope));
+    }
+
+    private void asActor(UUID actorId, Runnable judgement) {
         String previous = TenantContext.getUserId();
         try {
             TenantContext.setUserId(actorId.toString());
-            grantability.assertGrantable(atoms, scope);
+            judgement.run();
         } finally {
             if (previous == null || previous.isBlank()) {
                 TenantContext.clear();
@@ -1547,10 +1564,11 @@ public class AgentPrincipalService {
                         "Seeded role " + DEFAULT_AGENT_WORKSPACE_ROLE + " vanished under lock"));
         // D-180: the structural default binding must still clear BOTH gates before any write —
         // ① the agent-principal forbidden hard gate (GRANT_ANY_ATOM bypass never skips it) and
-        // ② the grant-side subset guard in the TARGET scope (grantor must hold every atom of the
-        //    default role here; instance rows cover all workspaces, a workspace row covers only its
-        //    own). A refusal throws inside the transaction ⇒ binding/workspace_agents/grants stay
-        //    at zero rows (403 grantor gate — never the cap's 409).
+        // ② the task-971 agent-template judgement in the TARGET scope (agent-bindable atoms +
+        //    the grantor's MANAGE_WORKSPACE_AGENTS / N1 authority) — not the human subset rule,
+        //    because the grantor instantiates a managed template rather than granting an atom.
+        //    A refusal throws inside the transaction ⇒ binding/workspace_agents/grants stay at
+        //    zero rows (403 grantor gate — never the cap's 409).
         List<String> defaultPresetAtoms = rolePermissionRepository.findByIdRoleId(defaultRole.getId())
                 .stream().map(row -> row.getId().getActionClass()).toList();
         String forbidden = PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(defaultPresetAtoms);
@@ -1559,7 +1577,7 @@ public class AgentPrincipalService {
                     "default workspace role carries an atom that cannot be granted to an agent: "
                             + forbidden);
         }
-        grantabilityAs(actorId, new LinkedHashSet<>(defaultPresetAtoms),
+        agentTemplateGrantabilityAs(actorId, new LinkedHashSet<>(defaultPresetAtoms),
                 com.cc01cc.p.xihe.cp.policy.AccessScope.workspace(workspaceId));
         // Lead ruling 2026-11-05: workspace-binding default grant ⇒ seed binding (immutable).
         GrantPresetBinding row = new GrantPresetBinding(defaultRole.getId(),

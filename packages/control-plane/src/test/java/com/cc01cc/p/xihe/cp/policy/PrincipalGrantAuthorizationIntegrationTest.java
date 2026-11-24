@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -10,6 +11,7 @@ import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +34,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -73,6 +76,9 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
 
     @Autowired
     private AgentPrincipalRepository agentPrincipalRepository;
+
+    @Autowired
+    private GrantPresetRepository roleRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -259,6 +265,112 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
         assertEquals(HttpStatus.CONFLICT, disabled.getStatusCode(),
                 "a workspace-scoped principal cannot be changed without a workspace context (D-196)");
         assertEquals("WORKSPACE_CONTEXT_REQUIRED", disabled.getBody().get("code"));
+    }
+
+    /**
+     * task-971 counter-example (a): a plain account creates its own agent while carrying the
+     * agent-default {@code action:clone}. Before the fix this was 403 PRIVILEGE_ESCALATION
+     * ({@code action:clone@*}) because the human actor does not hold what the AGENT_USER preset
+     * carries; the human subset rule does not belong on the agent-template path.
+     */
+    @Test
+    void plainUserCreatesAnAgentCarryingClone() {
+        fixture();
+        User plain = userRepository.saveAndFlush(new User(
+                "grant-auth-clone-" + UUID.randomUUID() + "@test.com", "hash",
+                "Grant auth clone", "grantclone" + shortId()));
+        grantDefaultService.ensureUserDefault(plain);
+        String plainToken = TestDataFactory.createGlobalToken(
+                plain.getId().toString(), plain.getEmail(), "USER", 0);
+        // The premise of the counter-example: the human deliberately does NOT hold clone.
+        assertFalse(hasCloneGrant(GrantPrincipalPathResolver.USER, plain.getId()),
+                "a human USER must not hold action:clone; otherwise the case proves nothing");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(plainToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> created = patchClient.exchange(
+                url("/api/v1/agent-principals"), HttpMethod.POST,
+                new HttpEntity<>(Map.of("name", "cloneCarryingAgent"), headers), Map.class);
+
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        UUID principalId = UUID.fromString(String.valueOf(created.getBody().get("principalId")));
+        assertTrue(hasCloneGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId),
+                "the agent template must materialize action:clone for the new principal");
+    }
+
+    /**
+     * task-971 counter-example (b): the human-to-human binding path keeps the subset gate verbatim.
+     * ADMIN holds MANAGE_ROLES (so it reaches the surface) but no {@code action:clone}; handing the
+     * clone-bearing AGENT_DELEGATOR role to another human is still 403 PRIVILEGE_ESCALATION.
+     */
+    @Test
+    void adminStillCannotGrantCloneToAnotherHuman() {
+        fixture();
+        assertFalse(hasCloneGrant(GrantPrincipalPathResolver.USER, adminUserId),
+                "the admin actor must not hold action:clone for this negative case to be meaningful");
+        User target = userRepository.findByUsername(targetUsername).orElseThrow();
+        // Keep every existing instance binding in the full-set payload (the PUT is a replacement,
+        // not a delta) and add the clone-bearing role for the other human. This isolates the case to
+        // the subset gate: no owner/super-admin invariant can answer instead.
+        List<String> existing = jdbcTemplate.query(
+                "SELECT subject_id, role_id FROM grant_preset_bindings"
+                        + " WHERE subject_type = 'user' AND scope_type = 'instance'",
+                (rs, rowNum) -> "{\"subjectId\":\"" + rs.getString(1)
+                        + "\",\"presetId\":\"" + rs.getString(2) + "\"}");
+        String body = "{\"bindings\":[" + String.join(",", existing)
+                + ",{\"subjectId\":\"" + target.getId()
+                + "\",\"presetId\":\"" + SystemGrantPresetCatalog.AGENT_DELEGATOR_ID + "\"}]}";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(adminToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> denied = patchClient.exchange(
+                url("/api/v1/bindings?scope=instance"), HttpMethod.PUT,
+                new HttpEntity<>(body, headers), Map.class);
+
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), String.valueOf(denied.getBody()));
+        assertEquals("PRIVILEGE_ESCALATION", denied.getBody().get("code"));
+        assertTrue(String.valueOf(denied.getBody().get("detail")).contains("clone"),
+                "the refusal must name the clone atom it cannot grant: " + denied.getBody().get("detail"));
+    }
+
+    /**
+     * task-971 counter-example (c): the instance-administration atoms stay outside the agent face.
+     * Even the new agent-template judgement cannot smuggle them in — the forbidden-atoms gate
+     * ({@link PermissionAtomCatalog#firstForbiddenAgentPrincipalAtom}) refuses before any write.
+     */
+    @Test
+    void agentPresetStillRefusesInstanceAdminAtoms() {
+        fixture();
+        User plain = userRepository.saveAndFlush(new User(
+                "grant-auth-instadmin-" + UUID.randomUUID() + "@test.com", "hash",
+                "Grant auth instadmin", "grantinstadmin" + shortId()));
+        grantDefaultService.ensureUserDefault(plain);
+        String plainToken = TestDataFactory.createGlobalToken(
+                plain.getId().toString(), plain.getEmail(), "USER", 0);
+        UUID adminRoleId = roleRepository.findByName(SystemGrantPresetCatalog.ADMIN).orElseThrow().getId();
+        String body = "{\"name\":\"instanceAdminAtomsAgent\",\"presetIds\":[\"" + adminRoleId + "\"]}";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(plainToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> denied = patchClient.exchange(
+                url("/api/v1/agent-principals"), HttpMethod.POST,
+                new HttpEntity<>(body, headers), Map.class);
+
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), String.valueOf(denied.getBody()));
+        assertEquals("ROLE_NOT_GRANTABLE", denied.getBody().get("code"));
+        assertTrue(String.valueOf(denied.getBody().get("detail")).contains("instance-admin role"),
+                "the refusal must name the forbidden-agent rule: " + denied.getBody().get("detail"));
+    }
+
+    /** True when the subject's materialized grants carry the canonical {@code action:clone} atom. */
+    private boolean hasCloneGrant(String subjectType, UUID subjectId) {
+        for (AuthorizationGrant grant : grantRepository.findBySubjectTypeAndSubjectId(subjectType, subjectId)) {
+            if (grant.getPermissions() != null && grant.getPermissions().toString().contains("action:clone")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ResponseEntity<Map> patch(Object body) {

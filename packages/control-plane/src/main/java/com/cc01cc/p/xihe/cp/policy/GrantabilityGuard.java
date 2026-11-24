@@ -34,6 +34,14 @@ import java.util.UUID;
  *       addressed workspace (instance ⊇ workspace, never the reverse).</li>
  * </ul>
  *
+ * <p><b>Agent templates are the one documented exception</b> (task-971): materializing an agent
+ * preset is not "granting" in the human sense — the caller instantiates a platform-managed template
+ * whose atoms the platform, not the caller, decides (a human deliberately does not hold
+ * {@code action:clone}; an agent preset does, per D-1935). That path uses the named
+ * {@link #assertAgentTemplateGrantable(Set, AccessScope)} instead of the subset question: the atom
+ * must be one an agent may hold at all, and the caller must hold the agent-tier authority for the
+ * target scope. Human-to-human grants and role definitions keep {@link #assertGrantable} verbatim.</p>
+ *
  * <p>Refusal shape: <b>403 {@code PRIVILEGE_ESCALATION}</b> with the offending atoms named. The
  * {@code cap} gate (BL-287) stays a separate <b>409</b> — this guard never answers 409.</p>
  *
@@ -147,6 +155,88 @@ public class GrantabilityGuard {
                     "Cannot grant atoms the caller does not hold: " + String.join(",", exceeding));
         }
         auditAllowed(subjectId, atomRows(requested), scope);
+    }
+
+    /**
+     * task-971: the <b>agent-template</b> write judgement — the deliberate counterpart of
+     * {@link #assertGrantable} for one specific write shape.
+     *
+     * <p>Why the subset rule does not belong here: when a human creates an agent, it is not handing
+     * itself (or another human) any atom; it is instantiating a managed template. The platform
+     * decides which atoms an agent may carry (D-1935: agents clone by default, humans do not), so
+     * "the caller does not hold {@code action:clone}" is not an escalation signal — it is the design.
+     * Asking the subset question there refused the whole "member creates their own agent" flow
+     * (task-971: {@code 403 PRIVILEGE_ESCALATION action:clone@*}).</p>
+     *
+     * <p>The two questions that <b>do</b> govern this write, in order:</p>
+     * <ol>
+     *   <li><b>may an agent hold the atom at all</b> — the catalog's agent-forbidden projection
+     *       ({@link PermissionAtomCatalog#agentPrincipalForbiddenAtoms()}); a role definition or agent
+     *       preset that carries an instance-administration atom is refused here as a {@code 409}, so
+     *       the widening can never carry one across;</li>
+     *   <li><b>may the caller administer this agent tier</b> —
+     *       {@code CREATE_OWN_AGENT} / {@code MANAGE_AGENT_PRINCIPALS} at the instance scope,
+     *       {@code MANAGE_WORKSPACE_AGENTS} in the target workspace (N1 covers every scope).</li>
+     * </ol>
+     *
+     * <p>{@code GRANT_ANY_ATOM} keeps its single bypass in this path too, audited with the atoms it
+     * skipped — the bypass is a distinct mechanism and must stay visible in the audit trail.</p>
+     *
+     * <p>Refusal shape: {@code 403 PRIVILEGE_ESCALATION} names the atoms the caller does not hold
+     * (the subset list, kept for the established refusal surface) plus the missing agent-tier
+     * authority; the agent-forbidden gate is the existing {@code 409}
+     * {@code AGENT_PRINCIPAL_FORBIDDEN_ATOMS}.</p>
+     *
+     * @param atoms atoms of the template/role being materialized (canonical names)
+     * @param scope the binding scope the template is materialized at ({@code null} = instance)
+     */
+    public void assertAgentTemplateGrantable(Set<String> atoms, AccessScope scope) {
+        Set<String> requested = atoms == null ? Set.of() : new LinkedHashSet<>(atoms);
+        UUID subjectId = requester.currentSubjectId();
+        if (subjectId == null) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Authentication required");
+        }
+        String forbidden = PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(requested);
+        if (forbidden != null) {
+            auditDenied(subjectId, requested, List.of(forbidden), scope);
+            throw new CpApiException(HttpStatus.CONFLICT, "AGENT_PRINCIPAL_FORBIDDEN_ATOMS",
+                    "atoms an agent principal may never hold: " + forbidden);
+        }
+        if (requester.holdsActionAtom(subjectId, ToolFaceRegistry.ACTION_GRANT_ANY_ATOM, null)) {
+            auditBypass(subjectId, requested, subsetMissing(subjectId, requested, scope), scope);
+            return;
+        }
+        if (!holdsAgentTierAuthority(subjectId, scope)) {
+            List<String> missing = subsetMissing(subjectId, requested, scope);
+            auditDenied(subjectId, requested, missing, scope);
+            throw new CpApiException(HttpStatus.FORBIDDEN, "PRIVILEGE_ESCALATION",
+                    "Cannot grant atoms the caller does not hold: " + String.join(",", missing)
+                            + " (agent template materialization requires CREATE_OWN_AGENT,"
+                            + " MANAGE_AGENT_PRINCIPALS or MANAGE_WORKSPACE_AGENTS in this scope)");
+        }
+        auditAllowed(subjectId, requested, scope);
+    }
+
+    /** The atoms of {@code requested} the caller does not hold at {@code scope} (subset list). */
+    private List<String> subsetMissing(UUID subjectId, Set<String> requested, AccessScope scope) {
+        return scope == null
+                ? exceedingInAnyScope(subjectId, requested)
+                : exceedingInScope(subjectId, requested, scope);
+    }
+
+    /**
+     * The agent-tier authority the materialization runs under: instance create (own agent or N1) or
+     * the workspace agent-management atom (N1 covers every scope). Never a role-name test.
+     */
+    private boolean holdsAgentTierAuthority(UUID subjectId, AccessScope scope) {
+        if (requester.holdsActionAtom(subjectId, ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS, null)) {
+            return true;
+        }
+        if (scope == null || scope.isInstance()) {
+            return requester.holdsActionAtom(subjectId, ToolFaceRegistry.ACTION_CREATE_OWN_AGENT, null);
+        }
+        return requester.holdsActionAtom(subjectId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
+                scope.id());
     }
 
     private List<String> exceedingRows(UUID subjectId,
