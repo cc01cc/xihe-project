@@ -40,5 +40,7 @@ export function discloseHostPath(
     principal: HostPathPrincipal,
 ): string | null {
     if (!canViewRawHostPath(principal)) return null;
-    return typeof rawPath === "string" && rawPath.length > 0 ? rawPath : null;
+    if (typeof rawPath !== "string" || rawPath.length === 0) return null;
+    // task-1026：盘符大小写必须单点归一（`h:/… → H:/…`），否则同一路径在两页看起来像两个值。
+    return rawPath.replace(/^([a-z]):/, (_match, drive: string) => `${drive.toUpperCase()}:`);
 }

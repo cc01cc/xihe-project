@@ -69,6 +69,9 @@ const addUsername = ref(""),
 // task-793：角色 combobox 的稳定名称来自**可见的表单标题**，不是当前选中值
 //（否则 VIEWER→EDITOR 改写就会让 a11y 名称快照漂移）。useId 避免同页多实例撞 id。
 const addRoleLabelId = `ws-members-add-role-label-${useId()}`;
+// task-1026 F25：用户名输入此前只有 placeholder，AX 树里是「无名输入框」。
+// 标题 id 被角色下拉独占 ⇒ 用户名必须有自己的 label id。
+const addUsernameLabelId = `ws-members-add-username-label-${useId()}`;
 
 /**
  * 2026-11-04 用户裁定（v23 + v29）：工作区成员邀请按 username 寻址，字符规则与注册/主体名同一条
@@ -420,11 +423,15 @@ onMounted(() => {
             <div :id="addRoleLabelId" class="text-sm font-medium">
                 {{ t("workspace.membersAddTitle") }}
             </div>
+            <label :id="addUsernameLabelId" class="sr-only">
+                {{ t("workspace.membersAddUsernameLabel") }}
+            </label>
             <div class="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
                 <Input
                     v-model="addUsername"
                     :disabled="!addFormInteractive"
                     :placeholder="t('workspace.membersAddUsernamePlaceholder')"
+                    :aria-labelledby="addUsernameLabelId"
                     maxlength="32"
                     data-testid="ws-members-add-input"
                     @keyup.enter="() => void handleAdd()"
@@ -455,6 +462,14 @@ onMounted(() => {
                     {{ adding ? t("workspace.membersAdding") : t("workspace.membersAddSubmit") }}
                 </Button>
             </div>
+            <!-- 空输入时按钮禁用是「结果」，这里必须给「原因」，不能只留一个坏掉的按钮。 -->
+            <p
+                v-if="addFormInteractive && !addUsername"
+                class="text-sm text-muted-foreground"
+                data-testid="ws-members-add-empty-hint"
+            >
+                {{ t("workspace.membersAddEmptyHint") }}
+            </p>
             <!-- 实时规则提示（v29）：非法名直接禁用提交，不必等一次 CP 400。 -->
             <p
                 v-if="addUsername && addUsernameError"

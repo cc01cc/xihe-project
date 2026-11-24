@@ -5,6 +5,11 @@ import { useI18n } from "vue-i18n";
 import { api, ApiError, isExecutionModeSwitchProbeFailure } from "../../../composables/api";
 import { useAuthStore } from "../../../stores/auth";
 import { Button } from "../../../components/ui/button";
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "../../../components/ui/collapsible";
 // task-31：确认层换 vendor AlertDialog（与同页「删除工作区」、成员移除、任务移除同族）。
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
 import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCancel.vue";
@@ -450,6 +455,8 @@ const specDigest = computed(() => {
 });
 
 const digestCopied = ref(false);
+// task-1026 F26：完整指纹默认折叠，首屏只留「与运行时比对用」的人话说明。
+const digestOpen = ref(false);
 function copySpecDigest(): void {
     const value = specDigest.value;
     if (!value) return;
@@ -1062,31 +1069,57 @@ onBeforeUnmount(stopPolling);
                                     {{ t("workspace.environmentFieldSpecHash") }}
                                 </dt>
                                 <!--
-                                    task-53 item 1：摘要是个长 hex（41 位），原先 `break-all` 把它
-                                    **在字符串中间硬折**（b02-tab-环境.png 里断成 `…e83b10` / `c060f61caaff8a`，
-                                    读起来像两个不同的值 —— 这是比"难看"更实质的问题：一个值被伪装成两个）。
-                                    改为「截断 + 一键复制」：可见部分短到不折行，完整值仍在 title 里、
-                                    且可整串复制，救回了排障需要的完整信息。
+                                    task-53 item 1：完整值必须可复制，所以复制入口常驻。
+                                    task-1026 F26：默认不上屏长 hex —— 先给一行「与运行时比对用」，
+                                    完整指纹收进折叠区；展开后仍用 break-all 完整可读（折叠 ≠ 丢信息）。
                                 -->
-                                <dd
-                                    v-if="specDigest"
-                                    class="flex min-w-0 items-center justify-end gap-2"
-                                >
-                                    <span
-                                        class="truncate font-mono text-right"
-                                        :title="specDigest"
-                                        data-testid="workspace-spec-digest"
-                                        >{{ specDigest }}</span
+                                <dd v-if="specDigest" class="flex min-w-0 flex-col items-end gap-1">
+                                    <p
+                                        class="text-right text-xs text-muted-foreground"
+                                        data-testid="workspace-spec-digest-summary"
                                     >
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        class="shrink-0 px-1 text-xs"
-                                        data-testid="workspace-spec-digest-copy"
-                                        @click="copySpecDigest"
-                                    >
-                                        {{ t("workspace.environmentCopyDigest") }}
-                                    </Button>
+                                        {{ t("workspace.environmentSpecDigestSummary") }}
+                                    </p>
+                                    <div class="flex items-center justify-end gap-2">
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            class="shrink-0 px-1 text-xs"
+                                            data-testid="workspace-spec-digest-copy"
+                                            @click="copySpecDigest"
+                                        >
+                                            {{ t("workspace.environmentCopyDigest") }}
+                                        </Button>
+                                        <Collapsible v-model:open="digestOpen">
+                                            <CollapsibleTrigger as-child>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    class="shrink-0 px-1 text-xs"
+                                                    :aria-expanded="digestOpen"
+                                                    data-testid="workspace-spec-digest-toggle"
+                                                >
+                                                    {{
+                                                        digestOpen
+                                                            ? t(
+                                                                  "workspace.environmentSpecDigestHide",
+                                                              )
+                                                            : t(
+                                                                  "workspace.environmentSpecDigestShow",
+                                                              )
+                                                    }}
+                                                </Button>
+                                            </CollapsibleTrigger>
+                                            <CollapsibleContent>
+                                                <span
+                                                    class="break-all font-mono text-xs"
+                                                    :title="specDigest"
+                                                    data-testid="workspace-spec-digest"
+                                                    >{{ specDigest }}</span
+                                                >
+                                            </CollapsibleContent>
+                                        </Collapsible>
+                                    </div>
                                 </dd>
                                 <dd v-else class="font-mono text-right">
                                     {{ t("workspace.environmentValueNone") }}

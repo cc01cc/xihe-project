@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import type { VueWrapper } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { createPinia } from "pinia";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -131,6 +132,14 @@ async function mountOpenedPanel() {
     });
     await flushPromises();
     return wrapper;
+}
+
+/** task-1026 F24：hooks/标识已收进卡片内的「技术详情」，断言前先展开。 */
+async function expandTechnicalDetails(wrapper: VueWrapper, principalId: string): Promise<void> {
+    await wrapper
+        .get(`[data-testid="workspace-agent-tech-details-${principalId}"]`)
+        .trigger("click");
+    await nextTick();
 }
 
 beforeEach(() => {
@@ -957,6 +966,7 @@ describe("WorkspaceAgentsPanel atom display localization (task-949 R78)", () => 
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         const wrapper = await mountOpenedPanel();
 
+        await expandTechnicalDetails(wrapper, localizedRow.principalId);
         const hooks = wrapper.get(`[data-testid="agent-hooks-${localizedRow.principalId}"]`).text();
         expect(hooks).toContain(i18n.global.t("workspace.agentActionWrite"));
         expect(hooks).toContain(i18n.global.t("workspace.agentActionExec"));
@@ -1020,6 +1030,7 @@ describe("WorkspaceAgentsPanel hook subscriptions (PLAN-0625 M3, read-only)", ()
         apiMock.getWorkspaceAgents.mockResolvedValue([guardAgent]);
         const wrapper = await mountOpenedPanel();
 
+        await expandTechnicalDetails(wrapper, guardAgent.principalId);
         const line = wrapper.get(
             '[data-testid="agent-hooks-88888888-8888-4888-8888-888888888888"]',
         );
@@ -1043,6 +1054,7 @@ describe("WorkspaceAgentsPanel hook subscriptions (PLAN-0625 M3, read-only)", ()
         ]);
         const wrapper = await mountOpenedPanel();
 
+        await expandTechnicalDetails(wrapper, guardAgent.principalId);
         const line = wrapper.get(
             '[data-testid="agent-hooks-88888888-8888-4888-8888-888888888888"]',
         );
@@ -1054,6 +1066,7 @@ describe("WorkspaceAgentsPanel hook subscriptions (PLAN-0625 M3, read-only)", ()
         apiMock.getWorkspaceAgents.mockResolvedValue([{ ...guardAgent, hooks: null }]);
         const wrapper = await mountOpenedPanel();
 
+        await expandTechnicalDetails(wrapper, guardAgent.principalId);
         expect(wrapper.find('[data-testid^="agent-hooks-"]').exists()).toBe(false);
     });
 
@@ -1061,6 +1074,7 @@ describe("WorkspaceAgentsPanel hook subscriptions (PLAN-0625 M3, read-only)", ()
         apiMock.getWorkspaceAgents.mockResolvedValue([{ ...guardAgent, hooks: { advisors: [] } }]);
         const wrapper = await mountOpenedPanel();
 
+        await expandTechnicalDetails(wrapper, guardAgent.principalId);
         expect(wrapper.find('[data-testid^="agent-hooks-"]').exists()).toBe(false);
     });
 });
@@ -2643,5 +2657,43 @@ describe("task-972 · hooks 写门按 ownership 分流", () => {
             `/instance/agent-principals/${USER_PRINCIPAL}`,
             expect.anything(),
         );
+    });
+});
+
+// task-1026 F24：卡片首屏不再平铺裸标识；标识只在「技术详情」展开后出现。
+describe("WorkspaceAgentsPanel card copy (task-1026 F24)", () => {
+    const row = {
+        principalId: "77777777-7777-4777-8777-777777777777",
+        name: "helper",
+        templateId: "11111111-2222-4333-8444-555555555555",
+        templateName: "Starter",
+        createdAt: "2026-11-02T00:00:00Z",
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+    };
+    const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    // 32 位无连字符形态也要覆盖：只测 8-4-4-4-12 会漏掉另一种 UUID 投影。
+    const BARE_UUID = /[0-9a-f]{32}/i;
+
+    it("首屏卡片不含裸 UUID / 模板 ID / 工作区 ID，展开技术详情后才出现 principalId", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([row]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        const wrapper = await mountOpenedPanel();
+
+        const card = wrapper.get(`[data-testid="workspace-agent-${row.principalId}"]`);
+        expect(card.text(), "首屏卡片不得出现任何 36 位 UUID 形态").not.toMatch(UUID);
+        expect(card.text(), "首屏卡片不得出现任何 32 位裸 hex 形态").not.toMatch(BARE_UUID);
+        expect(card.text(), "首屏卡片不得重复工作区 ID").not.toContain(WORKSPACE_ID);
+        expect(card.text(), "首屏卡片不得出现模板 ID").not.toContain(row.templateId);
+
+        await card
+            .get(`[data-testid="workspace-agent-tech-details-${row.principalId}"]`)
+            .trigger("click");
+        await nextTick();
+        const details = card.get(`[data-testid="workspace-agent-tech-content-${row.principalId}"]`);
+        expect(details.text()).toContain(row.principalId);
+        expect(details.text()).toContain(row.templateId);
+        expect(details.text()).toContain(WORKSPACE_ID);
     });
 });

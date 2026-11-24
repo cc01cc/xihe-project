@@ -333,6 +333,8 @@ export const messages = {
             agentCreatedAt: "创建时间",
             agentTemplateId: "模板 ID",
             agentWorkspaceId: "工作区 ID",
+            agentPrincipalId: "主体 ID",
+            agentCardTechnicalDetails: "技术详情",
             noAgentCapabilities: "无工具权限",
             agentCapSnapshotLabel: "冻结上限快照",
             agentCapSnapshotHint:
@@ -661,7 +663,8 @@ export const messages = {
             executionModeFixed: "固定",
             executionModeManagedHint:
                 "受管工作区由 Runtime 托管存储，只能使用 Docker 执行后端；需要 MXC 或宿主执行时，请新建直挂工作区。",
-            executionModeDirectHint: "仅支持在 MXC 与宿主执行之间切换；Docker 不参与切换。",
+            executionModeDirectHint:
+                "选择智能体运行任务时的隔离方式：受限沙盒更安全，宿主执行则不受沙盒限制。",
             executionModeLegacy: "历史配置",
             maturityExperimental: "实验性",
             maturityPreview: "预览",
@@ -923,6 +926,8 @@ export const messages = {
             membersRoleViewer: "只读",
             membersAddTitle: "添加成员",
             membersAddUsernamePlaceholder: "对方注册时使用的用户名",
+            membersAddUsernameLabel: "用户名",
+            membersAddEmptyHint: "填入用户名后才能添加成员。",
             membersAddSubmit: "添加",
             membersAdding: "添加中…",
             membersAdded: "成员已添加",
@@ -983,7 +988,7 @@ export const messages = {
             environmentFieldExecutionMode: "执行模式",
             environmentFieldCapability: "能力探测",
             environmentFieldGeneration: "代数",
-            environmentFieldSpecHash: "配置摘要",
+            environmentFieldSpecHash: "执行配置指纹",
             environmentFieldDevice: "设备",
             environmentFieldLastHeartbeat: "最近心跳",
             environmentFieldReleaseStatus: "释放状态",
@@ -1075,6 +1080,9 @@ export const messages = {
                 "服务端还没有返回这一层的执行配置，因此无法判断是否已分配；可点上方「刷新」重试。",
             // task-53 item 1：长摘要改为「截断 + 一键复制」后的按钮与反馈文案。
             environmentCopyDigest: "复制",
+            environmentSpecDigestSummary: "与运行时比对用；展开可查看完整指纹。",
+            environmentSpecDigestShow: "查看完整指纹",
+            environmentSpecDigestHide: "收起完整指纹",
             environmentDigestCopied: "已复制摘要",
             environmentDigestCopyFailed: "复制失败，请手动选取文本",
             environmentExecutionMode: {
@@ -1440,6 +1448,8 @@ export const messages = {
             agentCreatedAt: "Created",
             agentTemplateId: "Template ID",
             agentWorkspaceId: "Workspace ID",
+            agentPrincipalId: "Principal ID",
+            agentCardTechnicalDetails: "Technical details",
             noAgentCapabilities: "No tool permissions",
             agentCapSnapshotLabel: "Frozen cap snapshot",
             agentCapSnapshotHint:
@@ -1778,7 +1788,7 @@ export const messages = {
             executionModeManagedHint:
                 "Managed workspaces use Runtime-managed storage and always run on the Docker execution backend. Create a direct-attach workspace to use MXC or host execution.",
             executionModeDirectHint:
-                "Only MXC and host execution can be switched here; Docker does not participate in switching.",
+                "Choose how agent tasks are isolated: the constrained sandbox is safer, while host execution is not sandboxed.",
             executionModeLegacy: "Legacy value",
             maturityExperimental: "Experimental",
             maturityPreview: "Preview",
@@ -2042,6 +2052,8 @@ export const messages = {
             membersRoleViewer: "Viewer",
             membersAddTitle: "Add member",
             membersAddUsernamePlaceholder: "The username the other account registered with",
+            membersAddUsernameLabel: "Username",
+            membersAddEmptyHint: "Enter a username before adding a member.",
             membersAddSubmit: "Add",
             membersAdding: "Adding…",
             membersAdded: "Member added",
@@ -2106,7 +2118,7 @@ export const messages = {
             environmentFieldExecutionMode: "Execution mode",
             environmentFieldCapability: "Capability probe",
             environmentFieldGeneration: "Generation",
-            environmentFieldSpecHash: "Spec digest",
+            environmentFieldSpecHash: "Execution spec fingerprint",
             environmentFieldDevice: "Device",
             environmentFieldLastHeartbeat: "Last heartbeat",
             environmentFieldReleaseStatus: "Release status",
@@ -2200,6 +2212,10 @@ export const messages = {
             environmentStatusUnprobedHint:
                 "The server has not returned this layer's execution config yet, so whether a spec is assigned is unknown. Use Refresh above to retry.",
             environmentCopyDigest: "Copy",
+            environmentSpecDigestSummary:
+                "Used to compare against the runtime; expand to see the full fingerprint.",
+            environmentSpecDigestShow: "Show full fingerprint",
+            environmentSpecDigestHide: "Hide full fingerprint",
             environmentDigestCopied: "Digest copied",
             environmentDigestCopyFailed: "Copy failed — select the text manually",
             environmentExecutionMode: {

@@ -25,6 +25,8 @@ import type * as apiModule from "../../../composables/api";
 const WORKSPACE_ID = "ws-consistency";
 const OWNER_ID = "owner-1";
 const HOST_PATH = "h:/mock/ws";
+// task-1026 要求 4：盘符在 discloseHostPath 出口归一大写，两页同享。
+const NORMALIZED_HOST_PATH = "H:/mock/ws";
 const STORAGE_REF = "8b0d1c6e-0000-4000-8000-000000000000";
 
 const routeState = vi.hoisted(() => ({
@@ -178,8 +180,8 @@ describe("workspace host path consistency (task-51)", () => {
 
         const settingsText = settingsRow.text();
         const environmentText = environmentRow.find("dd").text();
-        expect(settingsText).toBe(HOST_PATH);
-        expect(environmentText).toBe(HOST_PATH);
+        expect(settingsText).toBe(NORMALIZED_HOST_PATH);
+        expect(environmentText).toBe(NORMALIZED_HOST_PATH);
         // 承重：两页读同一个服务端字段 ⇒ 值必须**逐字节相同**（不是"各自含有一半"）。
         expect(settingsText).toBe(environmentText);
         // 反向守卫：`storageRef` 是随机 UUID，出现在这一行就说明又绑错了字段。
@@ -229,9 +231,11 @@ describe("workspace host path consistency (task-51)", () => {
         const settings = await mountSettings();
         const environmentView = await mountEnvironment();
 
-        expect(settings.get('[data-testid="ws-settings-host-path"]').text()).toBe(HOST_PATH);
+        expect(settings.get('[data-testid="ws-settings-host-path"]').text()).toBe(
+            NORMALIZED_HOST_PATH,
+        );
         expect(environmentView.get('[data-testid="workspace-host-path"]').find("dd").text()).toBe(
-            HOST_PATH,
+            NORMALIZED_HOST_PATH,
         );
 
         settings.unmount();

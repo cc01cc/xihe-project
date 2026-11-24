@@ -420,3 +420,39 @@ describe("WorkspaceMembersPanel", () => {
         wrapper.unmount();
     });
 });
+
+// task-1026 F25：用户名输入此前只有 placeholder ⇒ AX 树里是「无名输入框」。
+describe("WorkspaceMembersPanel add-member accessible name (task-1026 F25)", () => {
+    it("用户名输入有独立可访问名称，且不与角色下拉共用 label", async () => {
+        const wrapper = await mountPanel();
+        const input = wrapper.get('[data-testid="ws-members-add-input"]');
+        const role = wrapper.get('[data-testid="ws-members-add-role"]');
+
+        const inputLabelId = input.attributes("aria-labelledby");
+        expect(inputLabelId, "用户名输入必须有 aria-labelledby").toBeTruthy();
+        expect(inputLabelId).not.toBe(role.attributes("aria-labelledby"));
+
+        const label = wrapper.get(`#${inputLabelId}`);
+        expect(label.text().trim().length).toBeGreaterThan(0);
+        expect(label.text()).toBe(i18n.global.t("workspace.membersAddUsernameLabel"));
+        wrapper.unmount();
+    });
+
+    it("空输入时提交禁用，并给出可见原因（不是只有 disabled 态）", async () => {
+        const wrapper = await mountPanel();
+        const input = wrapper.get('[data-testid="ws-members-add-input"]');
+        const button = wrapper.get('[data-testid="ws-members-add-btn"]');
+
+        expect(button.attributes("disabled")).toBeDefined();
+        const hint = wrapper.get('[data-testid="ws-members-add-empty-hint"]');
+        expect(hint.text()).toBe(i18n.global.t("workspace.membersAddEmptyHint"));
+
+        await input.setValue("newmember");
+        await flushPromises();
+        expect(
+            wrapper.find('[data-testid="ws-members-add-empty-hint"]').exists(),
+            "填入用户名后空输入原因应消失",
+        ).toBe(false);
+        wrapper.unmount();
+    });
+});

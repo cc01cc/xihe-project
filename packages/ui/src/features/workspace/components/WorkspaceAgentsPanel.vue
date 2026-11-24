@@ -35,6 +35,11 @@ import {
     SelectTrigger,
     SelectValue,
 } from "../../../components/ui/select";
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "../../../components/ui/collapsible";
 
 /**
  * PLAN-0626 M3 (D26-05): the workspace Agent management surface — the same body the old
@@ -1775,27 +1780,57 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                             {{ t("workspace.agentDefaultModelLabel") }}:
                             {{ agentDefaultModel(agent) }}
                         </p>
-                        <!-- PLAN-0625 M3：hook 订阅只读展示（null/无订阅 ⇒ 整行不渲染）。 -->
-                        <p
-                            v-if="hookKinds(agent).length > 0"
-                            class="mt-1 text-xs text-muted-foreground"
-                            :data-testid="`agent-hooks-${agent.principalId}`"
-                        >
-                            {{ t("workspace.agentHooksLabel") }}:
-                            {{ hookKinds(agent).join("、") }}
-                            <template v-if="hookActionClasses(agent).length">
-                                · {{ hookActionClasses(agent).map(hookActionLabel).join("、") }}
-                            </template>
-                        </p>
-                        <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
-                            {{ agent.principalId }}
-                        </p>
-                        <p class="mt-1 text-xs text-muted-foreground">
-                            {{ agent.templateName ?? t("workspace.defaultAgentTemplate") }} ·
-                            {{ t("workspace.agentTemplateId") }}: {{ agent.templateId ?? "—" }} ·
-                            {{ t("workspace.agentWorkspaceId") }}: {{ workspaceId }} ·
-                            {{ formatDateTime(agent.createdAt) }}
-                        </p>
+                        <!-- task-1026 F24：首屏只留人话字段；裸 UUID / 模板 ID / 工作区 ID
+                             收进技术详情，避免每张卡重复同一个 workspaceId。 -->
+                        <Collapsible class="mt-1">
+                            <CollapsibleTrigger as-child>
+                                <button
+                                    type="button"
+                                    class="rounded-md border px-2 py-0.5 text-xs"
+                                    :data-testid="`workspace-agent-tech-details-${agent.principalId}`"
+                                >
+                                    {{ t("workspace.agentCardTechnicalDetails") }}
+                                </button>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent
+                                :data-testid="`workspace-agent-tech-content-${agent.principalId}`"
+                            >
+                                <dl class="mt-1 space-y-1 text-xs text-muted-foreground">
+                                    <div class="flex gap-1">
+                                        <dt>{{ t("workspace.agentPrincipalId") }}:</dt>
+                                        <dd class="break-all font-mono">
+                                            {{ agent.principalId }}
+                                        </dd>
+                                    </div>
+                                    <!-- PLAN-0625 M3：hook 订阅只读展示（null/无订阅 ⇒ 整行不渲染）。 -->
+                                    <div
+                                        v-if="hookKinds(agent).length > 0"
+                                        :data-testid="`agent-hooks-${agent.principalId}`"
+                                    >
+                                        {{ t("workspace.agentHooksLabel") }}:
+                                        {{ hookKinds(agent).join("、") }}
+                                        <template v-if="hookActionClasses(agent).length">
+                                            ·
+                                            {{
+                                                hookActionClasses(agent)
+                                                    .map(hookActionLabel)
+                                                    .join("、")
+                                            }}
+                                        </template>
+                                    </div>
+                                    <div>
+                                        {{
+                                            agent.templateName ??
+                                            t("workspace.defaultAgentTemplate")
+                                        }}
+                                        · {{ t("workspace.agentTemplateId") }}:
+                                        {{ agent.templateId ?? "—" }} ·
+                                        {{ t("workspace.agentWorkspaceId") }}: {{ workspaceId }} ·
+                                        {{ formatDateTime(agent.createdAt) }}
+                                    </div>
+                                </dl>
+                            </CollapsibleContent>
+                        </Collapsible>
                     </div>
                     <div class="flex shrink-0 flex-col items-end gap-1">
                         <button

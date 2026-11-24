@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
+import { nextTick } from "vue";
 import WorkspaceEnvironmentView from "../pages/WorkspaceEnvironmentView.vue";
 import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
@@ -1256,20 +1257,22 @@ describe("WorkspaceEnvironmentView 执行配置细节（task-53 item 1/2/3）", 
         expect(execCard!.text()).not.toContain(i18n.global.t("workspace.environmentStatusUnknown"));
     });
 
-    it("item1: 摘要截断显示且完整值留在 title，并提供复制入口", async () => {
+    it("item1: 默认只给人话摘要，完整指纹收进折叠区，复制入口常驻", async () => {
         mockedApi.getWorkspaceEnvironment.mockResolvedValue(envWithSpec() as never);
         const wrapper = await mountView();
 
-        const digest = wrapper.find('[data-testid="workspace-spec-digest"]');
-        expect(digest.exists()).toBe(true);
-        // 完整值必须在 title 里 —— 「截断显示」不等于「丢失信息」。
-        expect(digest.attributes("title")).toBe(
-            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        );
-        // 可见文本走 truncate 类（CSS 截断），不再 break-all（后者会在字符串中间折断）。
-        expect(digest.classes()).toContain("truncate");
-        expect(digest.classes()).not.toContain("break-all");
+        const hash = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+        // 首屏不得出现 64 位 hex：技术值收进折叠区，不再直接上屏。
+        expect(wrapper.text()).not.toContain(hash);
+        expect(wrapper.text()).toContain(i18n.global.t("workspace.environmentSpecDigestSummary"));
         expect(wrapper.find('[data-testid="workspace-spec-digest-copy"]').exists()).toBe(true);
+
+        await wrapper.get('[data-testid="workspace-spec-digest-toggle"]').trigger("click");
+        await nextTick();
+        const digest = wrapper.get('[data-testid="workspace-spec-digest"]');
+        // 展开后完整值必须可读、可复制 —— 「折叠」不等于「丢失信息」。
+        expect(digest.text()).toBe(hash);
+        expect(digest.attributes("title")).toBe(hash);
     });
 
     it("item3: 释放运行资源是中性按钮，不是 destructive 描红", async () => {
