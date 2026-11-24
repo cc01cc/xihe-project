@@ -29,6 +29,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -89,6 +90,13 @@ public class MxcManagedInstallService {
     private final boolean pathProbeEnabled;
     private final ReentrantLock installLock = new ReentrantLock();
 
+    /**
+     * task-997: the class has three constructors (this Spring one plus two package-private
+     * test seams), so Spring cannot guess the injection point. Without this annotation it
+     * falls back to a default constructor that does not exist and every full-context test
+     * fails at startup with {@code NoSuchMethodException: ...<init>()}.
+     */
+    @Autowired
     public MxcManagedInstallService(
             @Value("${" + WorkspaceBackendPolicy.MXC_INSTALL_DIR_KEY + ":}") String installDirRaw,
             @Value("${" + SOURCE_URL_ENV + ":}") String sourceUrlRaw) {
