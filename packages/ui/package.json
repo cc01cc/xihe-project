@@ -18,6 +18,8 @@
         "gate:session-shell": "node scripts/check-session-shell.mjs",
         "gate:write-invalidate": "node scripts/check-write-invalidate.mjs",
         "gate:file-size": "node scripts/check-file-size.mjs",
+        "gate:reka-tab-patch": "node scripts/check-reka-select-tab-patch.mjs --upstream",
+        "selftest:reka-tab-patch": "node --test scripts/check-reka-select-tab-patch.test.mjs",
         "lint:oxlint": "oxlint .",
         "lint:oxfmt": "oxfmt --check .",
         "preview": "vite preview",
